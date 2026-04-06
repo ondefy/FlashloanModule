@@ -1,0 +1,21 @@
+{
+  "name": "unified-flashloan-scripts",
+  "version": "1.0.0",
+  "description": "TypeScript scripts for UnifiedFlashloanModule v4",
+  "scripts": {
+    "create-safe": "npx tsx src/create-safe.ts",
+    "install-module": "npx tsx src/install-module.ts",
+    "swap-collateral": "npx tsx src/swap-collateral.ts"
+  },
+  "dependencies": {
+    "@rhinestone/module-sdk": "^0.1.0",
+    "dotenv": "^16.3.1",
+    "permissionless": "^0.2.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.0"
+  }
+}

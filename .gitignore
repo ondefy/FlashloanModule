@@ -1,0 +1,29 @@
+# Env and secrets
+.env
+.env.local
+.env.*.local
+
+# Foundry
+out/
+cache/
+broadcast/
+coverage/
+*.log
+
+# Dependencies
+node_modules/
+
+# IDE / OS
+.idea/
+.vscode/
+.cursor/
+*.swp
+.DS_Store
+
+# Flashloan module
+zyfai-executor-module/
+core-modules/
+agent/
+contango-integration/
+contango-ref/
+lib/
