@@ -339,36 +339,147 @@ CREATE TRIGGER trg_positions_updated_at
 -- =============================================================================
 -- 10. ROW LEVEL SECURITY (RLS) — Defense in depth
 -- =============================================================================
+--
+-- HOW IT WORKS:
+--   - Backend uses SUPABASE_SERVICE_KEY (service_role) which BYPASSES RLS.
+--     This is the only role that should touch session_keys or write data.
+--   - If frontend ever connects directly to Supabase (realtime, direct queries),
+--     it uses the anon key + JWT. These policies restrict what it can access.
+--   - Supabase sets auth.uid() from the JWT sub claim. We store the user's
+--     lowercase EOA address as their Supabase auth UID during JWT creation.
+--
+-- ROLES:
+--   service_role  → full access (bypasses RLS) — used by Express backend
+--   authenticated → scoped to own data via auth.uid() — used by frontend direct queries
+--   anon          → read-only on public tables (tokens, protocols, rates)
 
--- Enable RLS on sensitive tables
+-- -----------------------------------------------------------------------------
+-- 10.1 ENABLE RLS ON ALL TABLES
+-- -----------------------------------------------------------------------------
+
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE positions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transaction_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE migration_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE protocols ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rate_snapshots ENABLE ROW LEVEL SECURITY;
 
--- Service role bypasses RLS (backend uses service role key)
--- These policies are for defense-in-depth if anon/authenticated roles are ever used
+-- -----------------------------------------------------------------------------
+-- 10.2 SERVICE ROLE — Full access (backend)
+-- service_role bypasses RLS by default in Supabase, no policies needed.
+-- These explicit policies ensure the backend can always operate even if
+-- Supabase changes defaults.
+-- -----------------------------------------------------------------------------
 
--- Users can only see their own data
-CREATE POLICY users_self ON users
-  FOR ALL USING (true);  -- Service role has full access
+CREATE POLICY service_all_users ON users
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-CREATE POLICY session_keys_self ON session_keys
-  FOR ALL USING (true);  -- Only accessible via service role
+CREATE POLICY service_all_session_keys ON session_keys
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-CREATE POLICY positions_self ON positions
-  FOR ALL USING (true);
+CREATE POLICY service_all_positions ON positions
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-CREATE POLICY logs_self ON transaction_logs
-  FOR ALL USING (true);
+CREATE POLICY service_all_transaction_logs ON transaction_logs
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
-CREATE POLICY migration_self ON migration_history
-  FOR ALL USING (true);
+CREATE POLICY service_all_migration_history ON migration_history
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Public tables (no RLS needed)
--- tokens and protocols are public reference data
--- rate_snapshots are public market data
+CREATE POLICY service_all_tokens ON tokens
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY service_all_protocols ON protocols
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY service_all_rate_snapshots ON rate_snapshots
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- -----------------------------------------------------------------------------
+-- 10.3 TOKENS & PROTOCOLS — Public read-only (reference data)
+-- Anyone can read token/protocol info. Only service_role can insert/update.
+-- -----------------------------------------------------------------------------
+
+CREATE POLICY anon_read_tokens ON tokens
+  FOR SELECT TO anon, authenticated USING (true);
+
+CREATE POLICY anon_read_protocols ON protocols
+  FOR SELECT TO anon, authenticated USING (true);
+
+CREATE POLICY anon_read_rate_snapshots ON rate_snapshots
+  FOR SELECT TO anon, authenticated USING (true);
+
+-- -----------------------------------------------------------------------------
+-- 10.4 USERS — Authenticated users can only read their own row
+-- They CANNOT update/delete (only backend can modify user records)
+-- -----------------------------------------------------------------------------
+
+CREATE POLICY auth_read_own_user ON users
+  FOR SELECT TO authenticated
+  USING (address = lower(auth.uid()::text));
+
+-- No INSERT/UPDATE/DELETE for authenticated — backend handles all mutations
+
+-- -----------------------------------------------------------------------------
+-- 10.5 SESSION_KEYS — FULLY LOCKED from frontend
+-- Session keys must NEVER be readable from the frontend.
+-- Only service_role (backend) can read/write.
+-- No policies for anon or authenticated = complete block.
+-- -----------------------------------------------------------------------------
+
+-- (no anon/authenticated policies = denied by default when RLS is enabled)
+
+-- -----------------------------------------------------------------------------
+-- 10.6 POSITIONS — Authenticated users can read their own positions
+-- Only backend can create/update/delete positions
+-- -----------------------------------------------------------------------------
+
+CREATE POLICY auth_read_own_positions ON positions
+  FOR SELECT TO authenticated
+  USING (user_address = lower(auth.uid()::text));
+
+-- -----------------------------------------------------------------------------
+-- 10.7 TRANSACTION_LOGS — Authenticated users can read their own logs
+-- Only backend can insert logs (immutable — no update/delete ever)
+-- -----------------------------------------------------------------------------
+
+CREATE POLICY auth_read_own_logs ON transaction_logs
+  FOR SELECT TO authenticated
+  USING (user_address = lower(auth.uid()::text));
+
+-- -----------------------------------------------------------------------------
+-- 10.8 MIGRATION_HISTORY — Authenticated users can read their own migrations
+-- Only backend can insert
+-- -----------------------------------------------------------------------------
+
+CREATE POLICY auth_read_own_migrations ON migration_history
+  FOR SELECT TO authenticated
+  USING (user_address = lower(auth.uid()::text));
+
+-- -----------------------------------------------------------------------------
+-- 10.9 ANON — Deny everything except public reference tables
+-- anon can only SELECT on tokens, protocols, rate_snapshots (policies above)
+-- All other tables: no anon policy = denied by default
+-- -----------------------------------------------------------------------------
+
+-- (no anon policies on users, session_keys, positions, transaction_logs,
+--  migration_history = all denied for anonymous access)
+
+-- -----------------------------------------------------------------------------
+-- 10.10 SECURITY AUDIT CHECKLIST
+-- -----------------------------------------------------------------------------
+--
+-- [x] session_keys: NO frontend access at all (no anon/authenticated policies)
+-- [x] users: authenticated can only SELECT own row (no write)
+-- [x] positions: authenticated can only SELECT own rows (no write)
+-- [x] transaction_logs: authenticated can only SELECT own rows (no write, immutable)
+-- [x] migration_history: authenticated can only SELECT own rows (no write)
+-- [x] tokens/protocols/rates: public read-only (reference data)
+-- [x] All writes go through service_role (Express backend) only
+-- [x] auth.uid() matched against lowercase address for row scoping
+-- [x] RLS enabled on EVERY table (no exceptions)
 
 -- =============================================================================
 -- 11. USEFUL VIEWS
@@ -436,7 +547,11 @@ LEFT JOIN tokens t ON tl.token_address = t.address
 LEFT JOIN protocols pr ON tl.protocol = pr.id;
 
 -- View: Positions due for health check (daemon query)
-CREATE VIEW v_positions_due_check AS
+-- IMPORTANT: This view joins session_keys — only use via service_role (backend).
+-- Never expose this view to frontend/anon/authenticated roles.
+CREATE VIEW v_positions_due_check
+  WITH (security_invoker = true)
+AS
 SELECT
   p.id,
   p.user_address,
@@ -455,6 +570,18 @@ JOIN session_keys sk ON p.user_address = sk.user_address AND sk.is_active = true
 WHERE p.status = 'active'
   AND p.next_check_at <= now()
 ORDER BY p.next_check_at ASC;
+
+-- =============================================================================
+-- 11.1 VIEW ACCESS CONTROL
+-- =============================================================================
+
+-- v_positions_due_check contains encrypted session keys — lock it down
+REVOKE ALL ON v_positions_due_check FROM anon, authenticated;
+GRANT SELECT ON v_positions_due_check TO service_role;
+
+-- Other views are safe for authenticated users (RLS still applies on underlying tables)
+GRANT SELECT ON v_positions_detail TO authenticated, service_role;
+GRANT SELECT ON v_transaction_logs TO authenticated, service_role;
 
 -- =============================================================================
 -- 12. HELPER FUNCTIONS

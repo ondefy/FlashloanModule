@@ -26,42 +26,12 @@ export const ERC20_ABI = [
     outputs: [{ type: 'bool' }],
     stateMutability: 'nonpayable',
   },
-] as const;
-
-export const WETH_ABI = [
   {
     type: 'function',
-    name: 'deposit',
+    name: 'decimals',
     inputs: [],
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    name: 'approve',
-    inputs: [
-      { name: 'spender', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    name: 'balanceOf',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint8' }],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    name: 'transfer',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'nonpayable',
   },
 ] as const;
 
@@ -156,13 +126,6 @@ export const AAVE_POOL_ABI = [
     ],
     stateMutability: 'view',
   },
-  {
-    type: 'function',
-    name: 'FLASHLOAN_PREMIUM_TOTAL',
-    inputs: [],
-    outputs: [{ type: 'uint128' }],
-    stateMutability: 'view',
-  },
 ] as const;
 
 export const MORPHO_BLUE_ABI = [
@@ -214,9 +177,22 @@ export const MORPHO_BLUE_ABI = [
     ],
     stateMutability: 'nonpayable',
   },
+  {
+    type: 'function',
+    name: 'position',
+    inputs: [
+      { name: 'id', type: 'bytes32' },
+      { name: 'user', type: 'address' },
+    ],
+    outputs: [
+      { name: 'supplyShares', type: 'uint256' },
+      { name: 'borrowShares', type: 'uint128' },
+      { name: 'collateral', type: 'uint128' },
+    ],
+    stateMutability: 'view',
+  },
 ] as const;
 
-/** UnifiedFlashloanModule v4 ABI (no signatures) */
 export const UNIFIED_MODULE_ABI = [
   {
     type: 'function',
@@ -273,11 +249,24 @@ export const UNIFIED_MODULE_ABI = [
     outputs: [{ type: 'address' }],
     stateMutability: 'view',
   },
+] as const;
+
+export const GUARDED_EXEC_MODULE_ABI = [
   {
+    name: 'executeGuardedBatch',
     type: 'function',
-    name: 'paused',
-    inputs: [],
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'view',
+    inputs: [
+      {
+        name: 'executions',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'callData', type: 'bytes' },
+        ],
+      },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
 ] as const;

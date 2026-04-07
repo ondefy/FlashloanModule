@@ -232,8 +232,8 @@ async function main() {
   try {
     const receipt = await smartClient.waitForUserOperationReceipt({
       hash: userOpHash,
-      timeout: 60_000,
-      pollingInterval: 3_000,
+      timeout: 180_000,
+      pollingInterval: 2_000,
     });
     console.log('  Tx:', receipt.receipt.transactionHash);
     console.log('  Block:', receipt.receipt.blockNumber);

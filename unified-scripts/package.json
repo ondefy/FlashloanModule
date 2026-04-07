@@ -5,6 +5,13 @@
   "scripts": {
     "create-safe": "npx tsx src/create-safe.ts",
     "install-module": "npx tsx src/install-module.ts",
+    "install-all-modules": "npx tsx src/install-all-modules.ts",
+    "install-guarded-module": "npx tsx src/install-guarded-module.ts",
+    "install-unified-module": "npx tsx src/install-unified-module.ts",
+    "install-smart-sessions": "npx tsx src/install-smart-sessions.ts",
+    "deposit-weth": "npx tsx src/deposit-weth.ts",
+    "borrow-usdc": "npx tsx src/borrow-usdc.ts",
+    "check-position": "npx tsx src/check-position.ts",
     "swap-collateral": "npx tsx src/swap-collateral.ts"
   },
   "dependencies": {

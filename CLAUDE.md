@@ -32,6 +32,12 @@ cd unified-scripts && yarn install
 yarn create-safe        # Deploy Safe smart account
 yarn install-module     # Install module as executor on Safe
 yarn swap-collateral    # Execute Aave -> Morpho collateral swap
+
+# Backend (Express + TypeScript)
+cd backend && yarn install
+yarn dev                # Start dev server with hot reload (port 3001)
+yarn start              # Start production server
+yarn lint               # Type-check (tsc --noEmit)
 ```
 
 ## Architecture

@@ -2,6 +2,15 @@
 
 ERC-7579 executor module for Safe smart wallets that enables atomic flashloan-based collateral swaps between DeFi lending protocols (Aave V3, Morpho Blue) on Base.
 
+## Deployed Contracts (Base Mainnet)
+
+| Contract | Address |
+|----------|---------|
+| GuardedExecModule | `0x2AbE0155cfeE2831db3F8a294Dd0825059e07689` |
+| UnifiedFlashloanModule (proxy) | `0x2C75600A65e79aC1DE53d9B815CdaFEBE3089927` |
+| UnifiedFlashloanModule (implementation) | `0x0f27999D99e9ffe2387e31F8344A7FAbf5FAe739` |
+| TargetRegistry | `0x1c824Fc9D57fFD350a3c8bc3cD66B2a855ebC7f8` |
+
 ## Repository Structure
 
 ```
@@ -14,6 +23,10 @@ src/
   registry/
     TargetRegistry.sol         # Target+selector whitelist
 
+script/
+  Deploy.s.sol                 # Deploy TargetRegistry + Module (impl + proxy)
+  SetupWhitelist.s.sol         # Whitelist all selectors in TargetRegistry
+
 test/
   mocks/                       # MockAavePool, MockMorphoBlue, MockERC20, MockSmartAccount, MockTargetRegistry
   UnifiedFlashloanModuleTest.t.sol   # Unit tests (48 tests, no network)
@@ -25,8 +38,23 @@ unified-scripts/               # TypeScript scripts for on-chain operations
     abis.ts                    # All ABIs
     setup.ts                   # Shared client setup (Safe, Pimlico, viem)
     create-safe.ts             # Deploy Safe smart account
-    install-module.ts          # Install module as executor on Safe
-    swap-collateral.ts         # Execute Aave->Morpho collateral swap via flashloan
+    install-guarded-module.ts  # Install GuardedExecModule (executor)
+    install-unified-module.ts  # Install UnifiedFlashloanModule (executor)
+    install-smart-sessions.ts  # Install SmartSessions (validator)
+    install-all-modules.ts     # Install all 3 modules at once
+    deposit-weth.ts            # Deposit WETH as collateral on Aave
+    borrow-usdc.ts             # Borrow USDC from Aave, transfer to EOA
+    check-position.ts          # View Safe balances + Aave position
+    swap-collateral.ts         # Aave -> Morpho collateral swap via flashloan
+
+backend/                       # Express + TypeScript API server
+  src/
+    index.ts                   # Server entry
+    config/                    # Env validation, contract addresses
+    db/supabase.ts             # Supabase client + CRUD operations
+    middleware/auth.ts          # JWT Bearer middleware
+    routes/                    # Auth, onboarding, vault, position routes
+    services/                  # Auth, crypto, onboarding, vault, monitor, session executor
 ```
 
 ## Build & Test
@@ -48,30 +76,154 @@ forge test -v
 forge test --match-test test_MorphoFlashloan_Success -vv
 ```
 
+## Deploy Contracts
+
+```bash
+# Dry run (simulate, no real tx)
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url https://base-mainnet.g.alchemy.com/v2/<KEY> \
+  --private-key <PK> \
+  -vvvv
+
+# Deploy for real
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url https://base-mainnet.g.alchemy.com/v2/<KEY> \
+  --private-key <PK> \
+  --broadcast \
+  -vvvv
+```
+
+### Verify Contracts
+
+```bash
+# Verify UnifiedFlashloanModule implementation (no constructor args)
+forge verify-contract <IMPL_ADDRESS> \
+  src/module/UnifiedFlashloanModule.sol:UnifiedFlashloanModule \
+  --chain base \
+  --etherscan-api-key <BASESCAN_API_KEY>
+
+# Verify TargetRegistry (has constructor arg: owner address)
+forge verify-contract <REGISTRY_ADDRESS> \
+  src/registry/TargetRegistry.sol:TargetRegistry \
+  --chain base \
+  --constructor-args <ABI_ENCODED_OWNER> \
+  --etherscan-api-key <BASESCAN_API_KEY>
+```
+
+### Setup TargetRegistry Whitelist
+
+After deploying, set `UNIFIED_MODULE_ADDRESS` and `TARGET_REGISTRY_ADDRESS` in `.env`, then:
+
+```bash
+forge script script/SetupWhitelist.s.sol:SetupWhitelistScript \
+  --rpc-url https://base-mainnet.g.alchemy.com/v2/<KEY> \
+  --private-key <PK> \
+  --broadcast \
+  -vvvv
+```
+
+This whitelists 9 target+selector pairs: USDC.approve, WETH.approve, Aave supply/borrow/repay/withdraw, Morpho supplyCollateral/borrow, Module.initiateFlashloan.
+
 ## TypeScript Scripts
 
 ```bash
 cd unified-scripts && yarn install
+```
 
+### Safe & Module Setup
+
+```bash
 # Step 1: Deploy a Safe smart account
 yarn create-safe
 
-# Step 2: Install UnifiedFlashloanModule as executor on Safe
-yarn install-module
+# Step 2: Install modules (run individually)
+yarn install-guarded-module      # GuardedExecModule (executor, type 2)
+yarn install-unified-module      # UnifiedFlashloanModule (executor, type 2)
+yarn install-smart-sessions      # SmartSessions (validator, type 1) — needed for session keys
 
-# Step 3: Execute Aave -> Morpho collateral swap via flashloan
+# Or install all 3 at once
+yarn install-all-modules
+```
+
+### Vault Operations
+
+```bash
+# Check Safe balances + Aave position
+yarn check-position
+
+# Deposit WETH as collateral on Aave V3
+yarn deposit-weth                        # Deposit all WETH in Safe
+yarn deposit-weth -- --amount 0.01       # Deposit specific amount
+
+# Borrow USDC from Aave (transferred to your EOA)
+yarn borrow-usdc -- --amount 100         # Borrow 100 USDC
+yarn borrow-usdc -- --amount 0.001       # Borrow 0.001 USDC (small test)
+
+# Swap collateral from Aave -> Morpho via flashloan
 yarn swap-collateral
 ```
 
-### Required .env
+### Required .env (root)
 
 ```env
-PRIVATE_KEY=0x...              # Owner private key
-BASE_RPC_URL=https://...       # Base RPC endpoint
-PIMLICO_API_KEY=...            # Pimlico bundler/paymaster API key
-SAFE_ACCOUNT_ADDRESS=0x...     # After create-safe
-UNIFIED_MODULE_ADDRESS=0x...   # Deployed module proxy address
+PRIVATE_KEY=0x...
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<KEY>
+BASESCAN_API_KEY=...
+PIMLICO_API_KEY=...
+SAFE_ACCOUNT_ADDRESS=0x...                          # After create-safe
+GUARDED_EXEC_MODULE_ADDRESS=0x2AbE0155cfeE2831db3F8a294Dd0825059e07689
+UNIFIED_MODULE_ADDRESS=0x2C75600A65e79aC1DE53d9B815CdaFEBE3089927
+UNIFIED_MODULE_IMPLEMENTATION_ADDRESS=0x0f27999D99e9ffe2387e31F8344A7FAbf5FAe739
+TARGET_REGISTRY_ADDRESS=0x1c824Fc9D57fFD350a3c8bc3cD66B2a855ebC7f8
 ```
+
+## Backend API
+
+```bash
+cd backend && yarn install
+cp .env.example .env    # Fill in Supabase, JWT, encryption keys
+yarn dev                # Start dev server (port 3001)
+yarn lint               # Type-check
+```
+
+### Backend .env
+
+```env
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...              # Service role key (NOT anon)
+JWT_SECRET=<openssl rand -base64 32>
+MASTER_ENCRYPTION_KEY=<openssl rand -hex 32>
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<KEY>
+PIMLICO_API_KEY=...
+UNIFIED_MODULE_ADDRESS=0x2C75600A65e79aC1DE53d9B815CdaFEBE3089927
+GUARDED_EXEC_MODULE_ADDRESS=0x2AbE0155cfeE2831db3F8a294Dd0825059e07689
+TARGET_REGISTRY_ADDRESS=0x1c824Fc9D57fFD350a3c8bc3cD66B2a855ebC7f8
+PORT=3001
+ALLOWED_ORIGINS=http://localhost:3000
+LOG_LEVEL=info
+```
+
+### API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | No | Health check |
+| GET | `/auth/nonce` | No | Get nonce for EIP-191 signing |
+| POST | `/auth/verify` | No | Verify signature, return JWT |
+| GET | `/onboarding/status` | JWT | Check onboarding step (0-3) |
+| POST | `/onboarding/deploy-safe/prepare` | JWT | Prepare Safe deploy UserOp |
+| POST | `/onboarding/deploy-safe/submit` | JWT | Submit signed Safe deploy |
+| POST | `/onboarding/install-module/prepare` | JWT | Prepare module install UserOp |
+| POST | `/onboarding/install-module/submit` | JWT | Submit signed module install |
+| POST | `/onboarding/create-session/prepare` | JWT | Prepare session key creation |
+| POST | `/onboarding/create-session/submit` | JWT | Submit session key creation |
+| POST | `/vault/deposit` | JWT | Supply collateral to best protocol |
+| POST | `/vault/borrow` | JWT | Borrow USDC, transfer to EOA |
+| POST | `/vault/repay` | JWT | Repay USDC debt |
+| POST | `/vault/withdraw` | JWT | Withdraw collateral to EOA |
+| GET | `/vault/position` | JWT | Current position details |
+| GET | `/positions` | JWT | All active positions |
+| GET | `/positions/history` | JWT | Transaction log history |
 
 ## UnifiedFlashloanModule v4
 
@@ -97,7 +249,7 @@ Safe calls initiateFlashloan(provider, token, amount, executions)
 
 No per-operation signatures. Security relies on three layers:
 
-1. **Session key** — SmartSessions validator authorizes the UserOp
+1. **Session key + SmartSessions** — Validator authorizes the UserOp (scoped key)
 2. **GuardedExecModule** — Validates `initiateFlashloan` selector against TargetRegistry
 3. **TargetRegistry** — Validates every inner execution's target+selector inside the callback
 
@@ -121,163 +273,6 @@ Registry is mandatory. Module reverts with `RegistryNotSet` if registry is `addr
 
 When using Aave flashloans, step 6 borrows `flashAmount + premium` to cover the Aave fee.
 
-## Product Objective
-
-### What we're building
-
-A DeFi yield optimization platform where users deposit collateral, borrow stablecoins, and we automatically rebalance their positions across lending protocols for the best APY.
-
-### User flow
-
-1. **Deposit** — User deposits ETH/WETH into their Safe smart wallet, which gets supplied as collateral on Aave or Morpho
-2. **Borrow** — User borrows USDC via the Safe, which gets transferred to their EOA (they keep it, spend it however they want)
-3. **Rebalance** — Backend daemon monitors rates and autonomously moves collateral between Aave/Morpho using flashloan swaps for better APY
-4. **Repay** — User sends USDC to the Safe, backend builds approve+repay batch transaction
-5. **Withdraw** — After repaying debt, user withdraws collateral from whichever protocol currently holds it
-
-### Architecture
-
-**Frontend** (already exists) — User-facing dApp for deposit/borrow/repay/withdraw actions
-
-**Backend** (to be built) — Express + SQLite + Viem + Permissionless.js
-- JWT auth (nonce-based EIP-191 sign, same pattern as contango-integration)
-- 3-step onboarding: Deploy Safe -> Install modules -> Create session key
-- Vault operations API: deposit, borrow, repay, withdraw
-- Background rebalancer daemon
-
-**On-chain** (this repo) — UnifiedFlashloanModule + TargetRegistry + Safe smart wallets
-
-### Backend architecture (planned)
-
-```
-backend/
-  src/
-    index.ts                    # Express server
-    db/database.ts              # SQLite (users, positions)
-    middleware/auth.ts           # JWT Bearer auth
-    routes/
-      auth.routes.ts            # Nonce -> sign -> JWT
-      onboarding.routes.ts      # Safe deploy + module install + session key
-      vault.routes.ts           # Deposit / Borrow / Repay / Withdraw
-      position.routes.ts        # Position health, balances
-    services/
-      auth.service.ts           # Nonce + JWT
-      crypto.service.ts         # AES-256-GCM for session keys
-      onboarding.service.ts     # Safe + modules + session key
-      vault.service.ts          # Transaction builders for vault ops
-      rebalancer.service.ts     # Flashloan-based collateral swap
-      monitor.service.ts        # Rate monitor + health check daemon
-```
-
-### API endpoints (planned)
-
-| Endpoint | Auth | Description |
-|----------|------|-------------|
-| `GET /auth/nonce` | No | Get nonce for EIP-191 signing |
-| `POST /auth/verify` | No | Verify signature, return JWT |
-| `GET /onboarding/status` | JWT | Check onboarding step (0-3) |
-| `POST /onboarding/deploy-safe/prepare` | JWT | Prepare Safe deploy UserOp |
-| `POST /onboarding/deploy-safe/submit` | JWT | Submit signed Safe deploy |
-| `POST /onboarding/install-module/prepare` | JWT | Prepare module install UserOp |
-| `POST /onboarding/install-module/submit` | JWT | Submit signed module install |
-| `POST /onboarding/create-session/prepare` | JWT | Prepare session key creation |
-| `POST /onboarding/create-session/submit` | JWT | Submit session key creation |
-| `POST /vault/deposit` | JWT | Deposit WETH -> Safe -> supply to protocol |
-| `POST /vault/borrow` | JWT | Borrow USDC via Safe -> transfer to EOA |
-| `POST /vault/repay` | JWT | Approve + repay USDC debt |
-| `POST /vault/withdraw` | JWT | Withdraw collateral to EOA |
-| `GET /vault/position` | JWT | Current collateral, debt, rates, protocol |
-| `GET /vault/rates` | No | Aave vs Morpho APY comparison |
-
-### Onboarding (3-step, prepare/submit pattern)
-
-1. **Deploy Safe** — ERC-4337 UserOp, user signs EIP-712 typed data from frontend
-2. **Install modules** — GuardedExecModule (executor) + SmartSessions (validator) + UnifiedFlashloanModule (executor)
-3. **Create session key** — Server generates key, user signs permission hash, key encrypted in DB with AES-256-GCM
-
-After onboarding, the server signs all vault operations with the session key. No frontend signature needed for deposit/borrow/repay/withdraw.
-
-### Session key and rebalancing
-
-Session key is used for autonomous rebalancing:
-
-```
-Session Key signs UserOp
-  -> SmartSessions validates
-  -> GuardedExecModule.executeGuardedBatch([
-       { target: UnifiedFlashloanModule, callData: initiateFlashloan(...) }
-     ])
-  -> TargetRegistry validates initiateFlashloan selector
-  -> UnifiedFlashloanModule triggers flashloan
-  -> Callback validates all inner executions against TargetRegistry
-  -> Atomic collateral swap completes
-```
-
-Session key is NOT a Safe owner. It's scoped via SmartSessions policies:
-- `userOpPolicies` — Controls which UserOps the key can sign
-- `actions` — Restricts to GuardedExecModule + `executeGuardedBatch` selector
-- `erc1271Policies` — Can be configured with `getUsageLimitPolicy` + `getTimeFramePolicy` for bounded ERC-1271 signing if needed later
-
-### TargetRegistry whitelist
-
-All selectors that the module can execute must be whitelisted:
-
-```
-# ERC20 operations
-USDC.approve
-WETH.approve
-
-# Aave operations
-AavePool.supply
-AavePool.borrow
-AavePool.repay
-AavePool.withdraw
-
-# Morpho operations
-MorphoBlue.supplyCollateral
-MorphoBlue.borrow
-
-# Module entry point (for GuardedExecModule)
-UnifiedFlashloanModule.initiateFlashloan
-```
-
-### Reference implementation
-
-The contango-integration (separate repo) contains a working reference with:
-- JWT auth flow (nonce -> EIP-191 sign -> JWT)
-- 3-step onboarding (Safe deploy, module install, session key)
-- Session key executor (server-side UserOp signing)
-- Position monitoring daemon
-- SQLite database with encrypted session key storage (AES-256-GCM)
-- Pimlico bundler + Permissionless.js for ERC-4337
-
-Key differences from contango-integration:
-- Contango uses GuardedExecModule only (no flashloans) — Contango's Maestro handles flashloans internally
-- We use GuardedExecModule + UnifiedFlashloanModule — our module handles flashloans directly
-- Contango requires ERC-1271 signatures — we removed them in favor of TargetRegistry-only validation
-
-### Vault operation transaction batches
-
-**Deposit** (user sends ETH/WETH to Safe first):
-```
-[WETH.deposit() (if ETH), WETH.approve(pool), pool.supply(WETH)]
-```
-
-**Borrow**:
-```
-[pool.borrow(USDC), USDC.transfer(userEOA)]
-```
-
-**Repay** (user sends USDC to Safe first):
-```
-[USDC.approve(pool), pool.repay(USDC)]
-```
-
-**Withdraw**:
-```
-[pool.withdraw(WETH, userEOA)]
-```
-
 ## Key Addresses (Base Mainnet)
 
 | Contract | Address |
@@ -289,6 +284,10 @@ Key differences from contango-integration:
 | Morpho Oracle | `0xFEa2D58cEfCb9fcb597723c6bAE66fFE4193aFE4` |
 | Morpho IRM | `0x46415998764C29aB2a25CbeA6254146D50D22687` |
 | Morpho USDC/WETH LLTV | `0.86e18` |
+| GuardedExecModule | `0x2AbE0155cfeE2831db3F8a294Dd0825059e07689` |
+| UnifiedFlashloanModule (proxy) | `0x2C75600A65e79aC1DE53d9B815CdaFEBE3089927` |
+| UnifiedFlashloanModule (impl) | `0x0f27999D99e9ffe2387e31F8344A7FAbf5FAe739` |
+| TargetRegistry | `0x1c824Fc9D57fFD350a3c8bc3cD66B2a855ebC7f8` |
 
 ## Conventions
 
@@ -298,3 +297,5 @@ Key differences from contango-integration:
 - **Storage**: ERC-7201 namespaced storage
 - **Test naming**: `test_<Description>` for success, `test_RevertWhen_<Description>` for reverts
 - **Package manager**: Yarn for TypeScript
+- **Database**: Supabase (PostgreSQL) — schema in `supabase-schema.sql`
+- **Session key encryption**: AES-256-GCM + HKDF per-user key derivation
