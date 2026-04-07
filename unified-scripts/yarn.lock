@@ -161,10 +161,10 @@
   resolved "https://registry.yarnpkg.com/@noble/hashes/-/hashes-1.8.0.tgz#cee43d801fcef9644b11b8194857695acd5f815a"
   integrity sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==
 
-"@rhinestone/module-sdk@^0.1.0":
-  version "0.1.32"
-  resolved "https://registry.yarnpkg.com/@rhinestone/module-sdk/-/module-sdk-0.1.32.tgz#32571e606b587de984bf56cba3569c91c0b7a2a6"
-  integrity sha512-wNzeIepHPhD0jiw3UOar+dAb6VKv4p8D4+947n0SLZHBdJ5S7moRCCL082NCo7Pz8+/C9kVriJASFeLZmJLo4g==
+"@rhinestone/module-sdk@^0.2.10":
+  version "0.2.11"
+  resolved "https://registry.yarnpkg.com/@rhinestone/module-sdk/-/module-sdk-0.2.11.tgz#6fe878fd1c1a51149b67541df9fbccdbb567b2df"
+  integrity sha512-FE8lMpKqU6tR5XjGPUHQPl2nzL5u78/GankestQ7kFzbSBvjpgGc85cLkNZjhlaNq3caYyGYz16yD7y/Vqnolg==
   dependencies:
     solady "^0.0.235"
     tslib "^2.7.0"

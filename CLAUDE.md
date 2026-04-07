@@ -46,7 +46,7 @@ yarn lint               # Type-check (tsc --noEmit)
 
 **UnifiedFlashloanModule** (`src/module/UnifiedFlashloanModule.sol`) — ERC-7579 executor module (type 2) installed on Safe smart wallets. Borrows tokens from Morpho Blue (0% fee) or Aave V3 (0.05% fee), executes a batch of operations on the Safe via `executeFromExecutor`, then repays. UUPS upgradeable with ERC-7201 namespaced storage. Entry point: `initiateFlashloan(provider, token, amount, executions)`.
 
-**TargetRegistry** (`src/registry/TargetRegistry.sol`) — Whitelist of `target + selector` pairs. Every execution inside a flashloan callback is validated against this registry. Also manages allowed ERC20 token recipients. Owner-managed via `addToWhitelist`/`removeFromWhitelist`.
+**TargetRegistry** (`src/registry/TargetRegistry.sol`) — Whitelist of `target + selector` pairs. Every execution inside a flashloan callback is validated against this registry. Also manages allowed ERC20 token recipients. Owner-managed via `addToWhitelist`/`removeFromWhitelist`. Pausable for emergency stops. Two-step ownership transfer.
 
 ### Security Model (3 layers)
 
@@ -63,6 +63,33 @@ Safe -> GuardedExecModule -> TargetRegistry (whitelist check) -> UnifiedFlashloa
   -> Morpho/Aave sends tokens to Module
   -> Callback: validate executions, transfer tokens to Safe, execute batch, pull tokens back, repay
 ```
+
+### Backend (backend/)
+
+Express + TypeScript server. Uses Supabase (PostgreSQL) for persistence, Viem for chain interaction, Pimlico for ERC-4337 bundling.
+
+**API Routes:**
+- `GET /health` — Health check
+- `POST /api/v2/auth/secure` — SIWE login, returns JWT (30-day expiry)
+- `GET /api/v2/auth/status` — Auth health check
+- `GET /onboarding/status` — Check onboarding progress (steps 0-3)
+- `POST /onboarding/deploy-safe/{prepare,submit}` — Safe deployment (EIP-712 sign flow)
+- `POST /onboarding/install-module/{prepare,submit}` — Module installation (one module per UserOp)
+- `POST /onboarding/create-session/{prepare,submit}` — Session key creation
+- `POST /onboarding/register-safe` — Register existing Safe (skip deploy)
+- `POST /vault/{deposit,borrow,repay,withdraw}` — Vault operations
+- `GET /vault/position` — Current position details
+- `GET /positions/` — All active positions
+- `GET /positions/history` — Transaction logs (paginated, max 200)
+
+**Service layer** (`backend/src/services/`): auth, onboarding, vault, crypto (AES-256-GCM encryption), session-executor, monitor (health factor daemon).
+
+**Auth flow:** Frontend signs SIWE message → `POST /api/v2/auth/secure` verifies (EOA via ecrecover or EIP-1271 for smart wallets) → JWT issued → subsequent requests use `Authorization: Bearer <token>`. `DEFI_API_JWT_SECRET` must match the old backend's secret for token compatibility.
+
+**Onboarding (3 steps, each uses prepare/submit pattern):**
+1. Deploy Safe smart wallet via ERC-4337 UserOp
+2. Install modules (GuardedExecModule + UnifiedFlashloanModule + SmartSessions) — one per UserOp, frontend loops
+3. Create session key — backend generates ephemeral key, encrypts with AES-256-GCM (HKDF per-user key from `MASTER_ENCRYPTION_KEY`), stores in Supabase
 
 ### Reference Implementations (read-only)
 
@@ -84,6 +111,23 @@ Uses viem + permissionless.js + Pimlico bundler for ERC-4337 UserOps. Setup in `
 - **Test naming**: `test_<Description>` for success, `test_RevertWhen_<Description>` for reverts
 - **Package manager**: Yarn for TypeScript
 - **Dependencies**: forge-std, openzeppelin-contracts (via git submodules)
+- **Address storage**: ALL addresses stored lowercase in Supabase, enforced by CHECK constraints. Always call `.toLowerCase()` before DB operations.
+- **Amount storage**: Stored as `NUMERIC` in raw units (wei/smallest unit). Conversion to display units in application layer only.
+
+## Key Environment Variables
+
+Contract addresses for `UNIFIED_MODULE_ADDRESS`, `GUARDED_EXEC_MODULE_ADDRESS`, and `TARGET_REGISTRY_ADDRESS` must be set in `.env` — these are deployment-specific. See `.env.example` (root for Foundry, `backend/.env.example` for backend).
+
+Backend requires: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (service role, not anon), `DEFI_API_JWT_SECRET`, `MASTER_ENCRYPTION_KEY` (64-char hex for AES-256-GCM), `BASE_RPC_URL`, `PIMLICO_API_KEY`.
+
+## Non-Obvious Patterns
+
+- **Pending ops store**: `onboarding.service.ts` keeps in-memory map of pending UserOps with 5-minute TTL, cleaned on each prepare call
+- **Stub owner pattern**: During onboarding, a stub account object throws on signing, forcing MetaMask to sign instead
+- **Module install loop**: Only one module installed per UserOp to avoid encoding issues; frontend calls prepare/submit multiple times
+- **Per-user encryption**: HKDF derivation from master key ensures single-key compromise doesn't expose all users
+- **Tiered health monitoring**: Check intervals scale with risk — 15s (HF < 1.3), 30s (1.3-1.5), 2min (1.5-2.0), 10min (> 2.0)
+- **Morpho partial support**: Deposit works, repay/withdraw marked TODO (Aave fully implemented)
 
 ## Product Context
 
@@ -91,4 +135,4 @@ DeFi yield optimization platform on Base. Users deposit collateral (WETH), borro
 
 **User flow**: Deposit WETH -> Borrow USDC (transferred to user's EOA) -> Backend monitors rates -> Auto-rebalance via flashloan swaps -> User repays USDC -> Withdraw WETH.
 
-**Backend (planned)**: Express + SQLite + Viem + Permissionless.js. JWT auth via EIP-191 nonce signing. 3-step onboarding: Deploy Safe -> Install modules (GuardedExecModule + SmartSessions + UnifiedFlashloanModule) -> Create session key. Session key enables server-side autonomous operations without user signatures.
+**Not yet built**: Rate service (Aave/Morpho rate fetching + Redis caching), rebalancer service (migration decision engine), BullMQ worker (batch processing), blockchain event listener (WETH deposit detection), frontend (Next.js).

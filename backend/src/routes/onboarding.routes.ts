@@ -29,6 +29,29 @@ router.get('/status', async (req: Request, res: Response) => {
   }
 });
 
+// ─── Register existing Safe (skip deploy) ─────────────────────────────────
+
+const registerSafeSchema = z.object({
+  safeAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'Invalid Safe address'),
+});
+
+/**
+ * POST /onboarding/register-safe — Register an existing Safe address (skip deploy).
+ * Use when the Safe was already deployed by another backend (e.g., api.zyf.ai).
+ * Frontend sends the known Safe address, backend verifies it's deployed on-chain,
+ * saves it, and advances to step 1.
+ */
+router.post('/register-safe', async (req: Request, res: Response) => {
+  try {
+    const { registerExistingSafe } = await import('../services/onboarding.service.js');
+    const { safeAddress } = registerSafeSchema.parse(req.body);
+    const result = await registerExistingSafe(req.user!.address, safeAddress);
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // ─── Step 1: Deploy Safe ──────────────────────────────────────────────────
 
 router.post('/deploy-safe/prepare', async (req: Request, res: Response) => {

@@ -1,38 +1,42 @@
 import { Router, type Request, type Response } from 'express';
-import { z } from 'zod';
-import { generateNonce, verifyAndIssue } from '../services/auth.service.js';
+import { secureAuth } from '../services/auth.service.js';
 
 const router = Router();
 
-const nonceQuerySchema = z.object({
-  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'Invalid Ethereum address'),
+/** GET /api/v2/auth/status — Health check (no auth required) */
+router.get('/status', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      status: 'Authentication service is running',
+      domain: process.env.SIWE_DOMAIN || 'localhost:3001',
+      statement: process.env.SIWE_STATEMENT || 'Sign in with Ethereum',
+      timestamp: new Date().toISOString(),
+    },
+  });
 });
 
-const verifyBodySchema = z.object({
-  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'Invalid Ethereum address'),
-  signature: z.string().startsWith('0x'),
-  nonce: z.string().min(1),
-});
-
-/** GET /auth/nonce?address=0x... */
-router.get('/nonce', (req: Request, res: Response) => {
+/** POST /api/v2/auth/secure — SIWE login (compatible with old backend) */
+router.post('/secure', async (req: Request, res: Response) => {
   try {
-    const { address } = nonceQuerySchema.parse(req.query);
-    const nonce = generateNonce(address);
-    res.json({ nonce });
+    const result = await secureAuth(req.body);
+    res.json({
+      success: true,
+      data: {
+        token: result.token,
+        expiresIn: result.expiresIn,
+        address: result.address,
+        message: 'Authentication successful (secure)',
+      },
+    });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Invalid request' });
-  }
-});
-
-/** POST /auth/verify */
-router.post('/verify', async (req: Request, res: Response) => {
-  try {
-    const { address, signature, nonce } = verifyBodySchema.parse(req.body);
-    const token = await verifyAndIssue(address, signature, nonce);
-    res.json({ token });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Verification failed' });
+    const status = err.status || 500;
+    const code = err.code || 'AUTHENTICATION_ERROR';
+    res.status(status).json({
+      success: false,
+      error: err.message || 'Failed to authenticate',
+      code,
+    });
   }
 });
 

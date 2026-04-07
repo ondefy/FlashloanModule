@@ -20,12 +20,18 @@ const app = express();
 
 // Middleware
 const allowedOrigins = env.ALLOWED_ORIGINS.split(',');
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({
+  origin: allowedOrigins,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+  credentials: true,
+  maxAge: 86400,
+}));
 app.use(express.json());
 app.use(pinoHttp({ logger }));
 
-// Routes
-app.use('/auth', authRoutes);
+// Routes — auth mounted at /api/v2/auth to match old backend
+app.use('/api/v2/auth', authRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/positions', positionRoutes);
 app.use('/vault', vaultRoutes);

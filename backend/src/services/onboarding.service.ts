@@ -32,6 +32,9 @@ import {
   getOwnableValidator,
   encodeValidationData,
   getEnableSessionDetails,
+  SmartSessionMode,
+  getPermissionId,
+  getSessionNonce,
 } from '@rhinestone/module-sdk';
 import { toFunctionSelector, getAbiItem } from 'viem';
 import { randomBytes } from 'crypto';
@@ -42,6 +45,7 @@ import { GUARDED_EXEC_MODULE_ABI } from '../utils/abis.js';
 import { encryptSessionKey } from './crypto.service.js';
 import {
   getUser,
+  upsertUser,
   setSafeAddress,
   updateOnboardingStep,
   saveSessionKey,
@@ -229,6 +233,32 @@ function serializeTypedData(typedData: ReturnType<typeof buildSafeOpTypedData>) 
   };
 }
 
+// ─── Register Existing Safe (skip deploy) ────────────────────────────────────
+
+/**
+ * Register a Safe that was already deployed by another backend (e.g., api.zyf.ai).
+ * Verifies it exists on-chain, saves it, and advances to step 1.
+ */
+export async function registerExistingSafe(userAddress: string, safeAddress: string) {
+  const { publicClient } = buildClients();
+
+  // Verify the Safe is actually deployed on-chain
+  const code = await publicClient.getCode({ address: safeAddress as Address });
+  if (!code || code === '0x') {
+    throw Object.assign(new Error('Safe not found on-chain at this address'), { status: 400 });
+  }
+
+  // Ensure user exists in DB (they may have authenticated via old backend's JWT)
+  await upsertUser(userAddress);
+
+  // Save and advance to step 1
+  await setSafeAddress(userAddress, safeAddress);
+  await updateOnboardingStep(userAddress, 1);
+
+  logger.info({ userAddress, safeAddress }, 'Existing Safe registered');
+  return { safeAddress: safeAddress.toLowerCase(), step: 1 };
+}
+
 // ─── Step 1: Deploy Safe ─────────────────────────────────────────────────────
 
 export async function prepareDeploySafe(userAddress: string) {
@@ -327,58 +357,77 @@ export async function prepareInstallModule(userAddress: string) {
   const unifiedModuleAddr = env.UNIFIED_MODULE_ADDRESS as Address;
   const smartSessions = getSmartSessionsValidator({});
 
-  // Build batch install calls
-  const installModuleAbi = [{
-    name: 'installModule', type: 'function',
-    inputs: [
-      { name: 'moduleTypeId', type: 'uint256' },
-      { name: 'module', type: 'address' },
-      { name: 'initData', type: 'bytes' },
-    ],
-    outputs: [], stateMutability: 'nonpayable',
-  }] as const;
+  // Find the FIRST module that needs installing (install one at a time)
+  let moduleToInstall: { address: Address; type: 'executor' | 'validator'; name: string } | null = null;
 
-  const calls: { to: Address; value: bigint; data: Hex }[] = [];
-
-  // Check and install each module
-  for (const { address, type, typeId } of [
-    { address: guardedModuleAddr, type: 'executor' as const, typeId: 2n },
-    { address: unifiedModuleAddr, type: 'executor' as const, typeId: 2n },
-    { address: smartSessions.address as Address, type: 'validator' as const, typeId: 1n },
+  // Install modules one at a time: executors first, then SmartSessions validator
+  for (const mod of [
+    { address: guardedModuleAddr, type: 'executor' as const, name: 'GuardedExecModule' },
+    { address: unifiedModuleAddr, type: 'executor' as const, name: 'UnifiedFlashloanModule' },
+    { address: smartSessions.address as Address, type: 'validator' as const, name: 'SmartSessions' },
   ]) {
     let installed = false;
-    try { installed = await smartClient.isModuleInstalled({ address, type, context: '0x' }); } catch { /* proceed */ }
+    try { installed = await smartClient.isModuleInstalled({ address: mod.address, type: mod.type, context: '0x' }); } catch { /* proceed */ }
+    logger.info({ name: mod.name, address: mod.address, installed }, 'Module install check');
     if (!installed) {
-      calls.push({
-        to: user.safe_address as Address,
-        value: 0n,
-        data: encodeFunctionData({ abi: installModuleAbi, functionName: 'installModule', args: [typeId, address, '0x'] }),
-      });
+      moduleToInstall = mod;
+      break; // Install first uninstalled module only
     }
   }
 
-  if (calls.length === 0) {
+  if (!moduleToInstall) {
     await updateOnboardingStep(userAddress, 2);
     throw Object.assign(new Error('All modules already installed'), { status: 409 });
   }
 
+  logger.info({ name: moduleToInstall.name, address: moduleToInstall.address }, 'Preparing single module install');
+
+  // Build a SINGLE installModule call (not batched — avoids encoding issues)
+  const calls = [{
+    to: safeAccount.address,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: [{
+        name: 'installModule',
+        type: 'function',
+        inputs: [
+          { name: 'moduleTypeId', type: 'uint256' },
+          { name: 'module', type: 'address' },
+          { name: 'initData', type: 'bytes' },
+        ],
+        outputs: [],
+        stateMutability: 'nonpayable',
+      }] as const,
+      functionName: 'installModule',
+      args: [BigInt(moduleToInstall.type === 'executor' ? 2 : 1), moduleToInstall.address, '0x' as Hex],
+    }),
+  }];
+
   const mockSig = getOwnableValidatorMockSignature({ threshold: 1 }) as Hex;
   const wrappedMockSig = encodePacked(['uint48', 'uint48', 'bytes'], [0, 0, mockSig]);
 
-  // @ts-ignore
-  const userOp = await smartClient.prepareUserOperation({
-    account: safeAccount, calls, signature: wrappedMockSig,
-  });
+  try {
+    // @ts-ignore
+    const userOp = await smartClient.prepareUserOperation({
+      account: safeAccount, calls, signature: wrappedMockSig,
+    });
 
-  const typedData = buildSafeOpTypedData(userOp);
-  const opId = generateOpId();
-  pendingOps.set(opId, {
-    userAddress: userAddress.toLowerCase(),
-    userOp, safeAccount, pimlicoClient, smartClient, createdAt: Date.now(),
-  });
+    const typedData = buildSafeOpTypedData(userOp);
+    const opId = generateOpId();
+    pendingOps.set(opId, {
+      userAddress: userAddress.toLowerCase(),
+      userOp, safeAccount, pimlicoClient, smartClient, createdAt: Date.now(),
+    });
 
-  logger.info({ userAddress, opId, callCount: calls.length }, 'Install modules prepared');
-  return { opId, typedData: serializeTypedData(typedData) };
+    logger.info({ userAddress, opId, module: moduleToInstall.name }, 'Install module prepared');
+    return { opId, typedData: serializeTypedData(typedData) };
+  } catch (err: any) {
+    logger.error({
+      userAddress, module: moduleToInstall.name, error: err.message,
+      details: err.details || err.cause?.message,
+    }, 'prepareUserOperation FAILED');
+    throw err;
+  }
 }
 
 export async function submitInstallModule(userAddress: string, opId: string, signature: Hex) {
@@ -387,11 +436,11 @@ export async function submitInstallModule(userAddress: string, opId: string, sig
   if (pending.userAddress !== userAddress.toLowerCase()) throw new Error('Operation does not belong to this user');
   pendingOps.delete(opId);
 
-  const { userOp, pimlicoClient } = pending;
+  const { userOp, pimlicoClient, smartClient } = pending;
   userOp.signature = encodePacked(['uint48', 'uint48', 'bytes'], [0, 0, signature]);
 
   const userOpHash = await sendSignedUserOp(pimlicoClient, userOp);
-  logger.info({ userAddress, userOpHash }, 'Install modules UserOp sent');
+  logger.info({ userAddress, userOpHash }, 'Install module UserOp sent');
 
   let txHash: string;
   try {
@@ -404,13 +453,49 @@ export async function submitInstallModule(userAddress: string, opId: string, sig
     logger.warn({ userAddress }, 'Receipt timeout, proceeding with UserOp hash');
   }
 
-  await updateOnboardingStep(userAddress, 2);
-  logger.info({ userAddress, txHash }, 'Modules installed');
-  return { txHash };
+  // Check if all modules are now installed
+  const env = getEnv();
+  const guardedModuleAddr = env.GUARDED_EXEC_MODULE_ADDRESS as Address;
+  const unifiedModuleAddr = env.UNIFIED_MODULE_ADDRESS as Address;
+  const smartSessionsCheck = getSmartSessionsValidator({});
+
+  let allInstalled = true;
+  for (const mod of [
+    { address: guardedModuleAddr, type: 'executor' as const },
+    { address: unifiedModuleAddr, type: 'executor' as const },
+    { address: smartSessionsCheck.address as Address, type: 'validator' as const },
+  ]) {
+    try {
+      const installed = await smartClient.isModuleInstalled({ address: mod.address, type: mod.type, context: '0x' });
+      if (!installed) { allInstalled = false; break; }
+    } catch { allInstalled = false; break; }
+  }
+
+  if (allInstalled) {
+    await updateOnboardingStep(userAddress, 2);
+    logger.info({ userAddress, txHash }, 'All modules installed');
+  } else {
+    logger.info({ userAddress, txHash }, 'Module installed, more remaining — frontend should call prepare again');
+  }
+
+  return { txHash, allInstalled };
 }
 
 // ─── Step 3: Create Session Key ──────────────────────────────────────────────
+//
+// Matches existing frontend pattern from rhinestone.utils.ts:
+//   1. Backend generates session key + session config
+//   2. Frontend calls signSessionKey() to sign permissionEnableHash via MetaMask
+//   3. Frontend sends signature + nonces back to backend
+//   4. Backend stores encrypted session key + signature for later use
+//
+// NO UserOp is submitted during session creation. The signature + nonces are
+// stored and used later when the session key executor builds UserOps.
 
+/**
+ * Step 3a: Generate session key and return session config for frontend to sign.
+ * Frontend will call signSessionKey() with this config.
+ */
 export async function prepareCreateSession(userAddress: string) {
   cleanupExpiredOps();
   const user = await getUser(userAddress);
@@ -419,12 +504,9 @@ export async function prepareCreateSession(userAddress: string) {
   if (user.onboarding_step >= 3) throw Object.assign(new Error('Session key already created'), { status: 409 });
 
   const env = getEnv();
-  const { publicClient, pimlicoClient, pimlicoUrl } = buildClients();
-  const { safeAccount, smartClient } = await buildStubSmartClient(
-    userAddress as Address, publicClient, pimlicoUrl, pimlicoClient, user.safe_address as Address,
-  );
-
   const guardedModuleAddr = env.GUARDED_EXEC_MODULE_ADDRESS as Address;
+
+  // Generate session key
   const sessionKeyPk = generatePrivateKey();
   const sessionOwner = privateKeyToAccount(sessionKeyPk);
 
@@ -432,6 +514,7 @@ export async function prepareCreateSession(userAddress: string) {
     getAbiItem({ abi: GUARDED_EXEC_MODULE_ABI, name: 'executeGuardedBatch' }),
   ) as Hex;
 
+  // Build session config (same format as api.zyf.ai /session-keys/config)
   const session: Session = {
     sessionValidator: OWNABLE_VALIDATOR_ADDRESS,
     sessionValidatorInitData: encodeValidationData({ threshold: 1, owners: [sessionOwner.address] }),
@@ -447,96 +530,66 @@ export async function prepareCreateSession(userAddress: string) {
     permitERC4337Paymaster: true,
   };
 
-  const account = getAccount({ address: safeAccount.address, type: 'safe' });
-
-  // @ts-ignore
-  const sessionDetails = await getEnableSessionDetails({
-    sessions: [session],
-    account,
-    clients: [publicClient] as any,
-  });
-
-  const hashToSign = sessionDetails.permissionEnableHash as Hex;
+  // Store session key in pending ops (5-min TTL)
   const opId = generateOpId();
   pendingOps.set(opId, {
     userAddress: userAddress.toLowerCase(),
-    userOp: null, safeAccount, pimlicoClient, smartClient,
-    sessionKeyPk, sessionDetails, sessionOwner, createdAt: Date.now(),
+    userOp: null, safeAccount: null as any, pimlicoClient: null as any,
+    sessionKeyPk, sessionDetails: null, sessionOwner, createdAt: Date.now(),
   });
 
+  // Serialize session for frontend (BigInt -> string)
+  const serializedSession = {
+    ...session,
+    chainId: session.chainId.toString(),
+    actions: session.actions.map(a => ({
+      ...a,
+      actionTarget: a.actionTarget,
+      actionTargetSelector: a.actionTargetSelector,
+    })),
+  };
+
   logger.info({ userAddress, opId, sessionKeyAddress: sessionOwner.address }, 'Create session prepared');
-  return { opId, hashToSign };
+  return {
+    opId,
+    sessionKeyAddress: sessionOwner.address,
+    sessions: [serializedSession],
+  };
 }
 
+/**
+ * Step 3b: Receive the MetaMask-signed permissionEnableHash from frontend.
+ * Store the encrypted session key and advance to step 3.
+ *
+ * Body: { opId, signature (signed permissionEnableHash), nonces (session nonces) }
+ */
 export async function submitCreateSession(userAddress: string, opId: string, signature: Hex) {
   const pending = pendingOps.get(opId);
   if (!pending) throw new Error('Pending operation not found or expired');
   if (pending.userAddress !== userAddress.toLowerCase()) throw new Error('Operation does not belong to this user');
   pendingOps.delete(opId);
 
-  const env = getEnv();
-  const { safeAccount, pimlicoClient, smartClient, sessionKeyPk, sessionDetails, sessionOwner } = pending;
-  const guardedModuleAddr = env.GUARDED_EXEC_MODULE_ADDRESS as Address;
+  const { sessionKeyPk, sessionOwner } = pending;
 
-  sessionDetails.enableSessionData.enableSession.permissionEnableSig = signature;
-
-  const smartSessions = getSmartSessionsValidator({});
-  const account = getAccount({ address: safeAccount.address, type: 'safe' });
-  const { publicClient } = buildClients();
-
-  const nonce = await getAccountNonce(publicClient as any, {
-    address: safeAccount.address,
-    entryPointAddress: entryPoint07Address,
-    key: encodeValidatorNonce({ account, validator: smartSessions }),
-  });
-
-  sessionDetails.signature = getOwnableValidatorMockSignature({ threshold: 1 });
-
-  // Dummy call: WETH.approve(WETH, 0) — passes TargetRegistry
-  const WETH = '0x4200000000000000000000000000000000000006' as Address;
-  const approveCallData = encodeFunctionData({
-    abi: [{ name: 'approve', type: 'function', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' }] as const,
-    functionName: 'approve',
-    args: [WETH, 0n],
-  });
-  const callData = encodeFunctionData({
-    abi: GUARDED_EXEC_MODULE_ABI,
-    functionName: 'executeGuardedBatch',
-    args: [[{ target: WETH, value: 0n, callData: approveCallData }]],
-  });
-
-  // @ts-ignore
-  const userOp = await smartClient.prepareUserOperation({
-    account: safeAccount, nonce,
-    calls: [{ to: guardedModuleAddr, value: 0n, data: callData }],
-    signature: encodeSmartSessionSignature(sessionDetails),
-  });
-
-  const opHash = getUserOperationHash({
-    chainId: base.id, entryPointAddress: entryPoint07Address, entryPointVersion: '0.7', userOperation: userOp,
-  });
-
-  sessionDetails.signature = await sessionOwner!.signMessage({ message: { raw: opHash } });
-  userOp.signature = encodeSmartSessionSignature(sessionDetails);
-
-  const hash = await sendSignedUserOp(pimlicoClient, userOp);
-
-  let txHash: string;
-  try {
-    const receipt = await pimlicoClient.waitForUserOperationReceipt({
-      hash, timeout: USEROP_RECEIPT_TIMEOUT, pollingInterval: USEROP_POLL_INTERVAL,
-    });
-    txHash = receipt.receipt.transactionHash;
-  } catch {
-    txHash = hash;
-    logger.warn({ userAddress }, 'Session key receipt timeout, proceeding');
-  }
-
-  // Encrypt and store session key
+  // Encrypt and store session key + the signed permissionEnableHash
   const encryptedKey = encryptSessionKey(sessionKeyPk!, userAddress);
   await saveSessionKey(userAddress, sessionOwner!.address, encryptedKey);
+
+  // Store the signature for later use when building enable-mode UserOps
+  // The session executor will use this signature + session key to build UserOps
+  const supabase = (await import('../db/supabase.js')).getSupabase();
+  await supabase
+    .from('session_keys')
+    .update({
+      encrypted_key: {
+        ...JSON.parse(encryptedKey),
+        permission_enable_sig: signature,
+      },
+    })
+    .eq('user_address', userAddress.toLowerCase());
+
   await updateOnboardingStep(userAddress, 3);
 
-  logger.info({ userAddress, txHash, sessionKeyAddress: sessionOwner!.address }, 'Session key created');
-  return { sessionKeyAddress: sessionOwner!.address, txHash };
+  logger.info({ userAddress, sessionKeyAddress: sessionOwner!.address }, 'Session key stored');
+  return { sessionKeyAddress: sessionOwner!.address };
 }

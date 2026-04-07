@@ -11,11 +11,12 @@
     "install-smart-sessions": "npx tsx src/install-smart-sessions.ts",
     "deposit-weth": "npx tsx src/deposit-weth.ts",
     "borrow-usdc": "npx tsx src/borrow-usdc.ts",
+    "create-session-key": "npx tsx src/create-session-key.ts",
     "check-position": "npx tsx src/check-position.ts",
     "swap-collateral": "npx tsx src/swap-collateral.ts"
   },
   "dependencies": {
-    "@rhinestone/module-sdk": "^0.1.0",
+    "@rhinestone/module-sdk": "^0.2.10",
     "dotenv": "^16.3.1",
     "permissionless": "^0.2.0",
     "viem": "^2.0.0"

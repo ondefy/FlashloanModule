@@ -5,8 +5,8 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_KEY: z.string().min(1),
 
-  // Auth
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  // Auth (shared with old backend — must be identical so tokens work across both)
+  DEFI_API_JWT_SECRET: z.string().min(16, 'DEFI_API_JWT_SECRET must be at least 16 characters'),
 
   // Encryption
   MASTER_ENCRYPTION_KEY: z.string().length(64, 'MASTER_ENCRYPTION_KEY must be 64-char hex (32 bytes)'),
