@@ -530,7 +530,21 @@ export async function prepareCreateSession(userAddress: string) {
     permitERC4337Paymaster: true,
   };
 
-  // Store session key in pending ops (5-min TTL)
+  // Compute permissionEnableHash using the BORROW AGENT's Safe address (not the main ZyfAI Safe)
+  const { publicClient } = buildClients();
+  const safeAddr = user.safe_address as Address;
+  const account = getAccount({ address: safeAddr, type: 'safe' });
+
+  // @ts-ignore
+  const enableDetails = await getEnableSessionDetails({
+    sessions: [session],
+    account,
+    clients: [publicClient] as any,
+  });
+
+  const permissionEnableHash = enableDetails.permissionEnableHash as Hex;
+
+  // Store session key + enable details in pending ops (5-min TTL)
   const opId = generateOpId();
   pendingOps.set(opId, {
     userAddress: userAddress.toLowerCase(),
@@ -538,22 +552,11 @@ export async function prepareCreateSession(userAddress: string) {
     sessionKeyPk, sessionDetails: null, sessionOwner, createdAt: Date.now(),
   });
 
-  // Serialize session for frontend (BigInt -> string)
-  const serializedSession = {
-    ...session,
-    chainId: session.chainId.toString(),
-    actions: session.actions.map(a => ({
-      ...a,
-      actionTarget: a.actionTarget,
-      actionTargetSelector: a.actionTargetSelector,
-    })),
-  };
-
   logger.info({ userAddress, opId, sessionKeyAddress: sessionOwner.address }, 'Create session prepared');
   return {
     opId,
     sessionKeyAddress: sessionOwner.address,
-    sessions: [serializedSession],
+    permissionEnableHash,
   };
 }
 

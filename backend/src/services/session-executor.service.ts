@@ -201,8 +201,25 @@ export async function executeGuardedBatch(
   userOperation.signature = encodeSmartSessionSignature(sessionDetails);
 
   // 9. Submit UserOperation
-  const userOpHash = await smartClient.sendUserOperation(userOperation);
-  logger.info({ userAddress, userOpHash }, 'UserOp submitted');
+  let userOpHash: Hex;
+  try {
+    userOpHash = await smartClient.sendUserOperation(userOperation);
+    logger.info({ userAddress, userOpHash }, 'UserOp submitted');
+  } catch (sendErr: any) {
+    // Extract bundler revert reason
+    const details = sendErr.details || sendErr.cause?.data?.message || sendErr.cause?.message || '';
+    const shortMessage = sendErr.shortMessage || '';
+    logger.error({
+      userAddress,
+      safeAddress,
+      mode: permissionEnableSig ? 'ENABLE' : 'USE',
+      error: sendErr.message,
+      shortMessage,
+      details,
+      executionCount: executions.length,
+    }, 'UserOp sendUserOperation FAILED');
+    throw sendErr;
+  }
 
   // 10. Wait for receipt
   const receipt = await pimlicoClient.waitForUserOperationReceipt({ hash: userOpHash });

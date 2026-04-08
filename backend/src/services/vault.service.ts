@@ -1,8 +1,10 @@
 import {
   createPublicClient,
+  encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
   http,
+  keccak256,
   maxUint256,
   type Address,
   type Hex,
@@ -29,6 +31,28 @@ const USDC_DECIMALS = 6;
 
 function getPublicClient() {
   return createPublicClient({ chain: base, transport: http(getEnv().BASE_RPC_URL) });
+}
+
+/** Compute Morpho Blue market ID = keccak256(abi.encode(loanToken, collateralToken, oracle, irm, lltv)) */
+function getMorphoMarketId(): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+      ],
+      [
+        MORPHO_MARKET.loanToken,
+        MORPHO_MARKET.collateralToken,
+        MORPHO_MARKET.oracle,
+        MORPHO_MARKET.irm,
+        MORPHO_MARKET.lltv,
+      ],
+    ),
+  );
 }
 
 /**
@@ -342,7 +366,31 @@ export async function getPositionInfo(userAddress: string) {
   const publicClient = getPublicClient();
   const safeAddr = user.safe_address as Address;
 
-  // 1. Aave account data (all 6 values)
+  // Determine current protocol from DB (defaults to aave_v3 if no position yet)
+  let currentProtocol = 'aave_v3';
+  try {
+    const positions = await getActivePositions(userAddress);
+    if (positions && positions.length > 0) {
+      currentProtocol = positions[0].current_protocol;
+    }
+  } catch { /* default to aave_v3 */ }
+
+  // Read idle WETH sitting in Safe (not yet supplied to any protocol)
+  let idleWeth = 0n;
+  try {
+    idleWeth = await publicClient.readContract({
+      address: TOKENS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr],
+    }) as bigint;
+  } catch { /* ignore */ }
+
+  if (currentProtocol === 'morpho_blue') {
+    return getMorphoPositionInfo(publicClient, safeAddr, idleWeth);
+  }
+  return getAavePositionInfo(publicClient, safeAddr, idleWeth);
+}
+
+/** Read position data from Aave V3 */
+async function getAavePositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint) {
   const [totalCollateralBase, totalDebtBase, availableBorrowsBase, currentLiquidationThreshold, ltv, healthFactor] =
     await publicClient.readContract({
       address: POOLS.AAVE_V3,
@@ -353,7 +401,6 @@ export async function getPositionInfo(userAddress: string) {
 
   const hasPosition = totalCollateralBase > 0n || totalDebtBase > 0n;
 
-  // 2. Get raw token balances (aToken for WETH deposited, variableDebtToken for USDC borrowed)
   let deposited = 0n;
   let borrowed = 0n;
 
@@ -389,20 +436,15 @@ export async function getPositionInfo(userAddress: string) {
     }
   }
 
-  // 3. Derive WETH price from on-chain data (avoid external oracle dependency)
   let wethPriceUsd = 0;
   if (deposited > 0n && totalCollateralBase > 0n) {
     wethPriceUsd = Number(totalCollateralBase) / 1e8 / (Number(deposited) / 1e18);
   }
 
-  // 4. Compute borrowable (availableBorrowsBase is 8-dec USD, convert to 6-dec USDC at $1)
   const borrowableUsdc = availableBorrowsBase / 100n;
 
-  // 5. Compute withdrawable (max WETH removable keeping HF >= 1.05)
   let withdrawable = deposited;
   if (totalDebtBase > 0n && deposited > 0n && totalCollateralBase > 0n) {
-    // minCollateralBase = debt * 1.05 / (liquidationThreshold / 10000)
-    // = debt * 10500 / liquidationThreshold
     const minCollateralBase = (totalDebtBase * 10500n) / currentLiquidationThreshold;
     if (totalCollateralBase > minCollateralBase) {
       const excessBase = totalCollateralBase - minCollateralBase;
@@ -412,11 +454,21 @@ export async function getPositionInfo(userAddress: string) {
     }
   }
 
-  // 6. Cap health factor display (Aave returns maxUint256 when no debt)
   const hfRaw = Number(formatUnits(healthFactor, 18));
   const hfDisplay = totalDebtBase === 0n ? 0 : (hfRaw > 999 ? 999 : hfRaw);
 
   return {
+    position: {
+      collateralUsd: Number(formatUnits(totalCollateralBase, AAVE_BASE_DECIMALS)),
+      debtUsd: Number(formatUnits(totalDebtBase, AAVE_BASE_DECIMALS)),
+      healthFactor: hfDisplay,
+      hasPosition,
+      ltv: Number(ltv) / 10000,
+      maxLtv: Number(ltv) / 10000,
+      liquidationThreshold: Number(currentLiquidationThreshold) / 10000,
+      protocol: 'Aave V3',
+    },
+    // Keep legacy "aave" key for backward compatibility with frontend
     aave: {
       collateralUsd: Number(formatUnits(totalCollateralBase, AAVE_BASE_DECIMALS)),
       debtUsd: Number(formatUnits(totalDebtBase, AAVE_BASE_DECIMALS)),
@@ -430,6 +482,161 @@ export async function getPositionInfo(userAddress: string) {
     balances: {
       weth: {
         deposited: deposited.toString(),
+        idle: idleWeth.toString(),
+        available: withdrawable.toString(),
+        withdrawable: withdrawable.toString(),
+        decimals: 18,
+        priceUsd: wethPriceUsd,
+      },
+      usdc: {
+        borrowed: borrowed.toString(),
+        borrowable: borrowableUsdc.toString(),
+        repayable: borrowed.toString(),
+        decimals: 6,
+        priceUsd: 1.0,
+      },
+    },
+  };
+}
+
+/** Read position data from Morpho Blue */
+async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint) {
+  const marketId = getMorphoMarketId();
+
+  // Read Morpho position and market state in parallel
+  const [positionResult, marketResult] = await Promise.all([
+    publicClient.readContract({
+      address: POOLS.MORPHO_BLUE,
+      abi: MORPHO_BLUE_ABI,
+      functionName: 'position',
+      args: [marketId, safeAddr],
+    }),
+    publicClient.readContract({
+      address: POOLS.MORPHO_BLUE,
+      abi: MORPHO_BLUE_ABI,
+      functionName: 'market',
+      args: [marketId],
+    }),
+  ]);
+
+  const [supplyShares, borrowShares, collateral] = positionResult as [bigint, bigint, bigint];
+  const [totalSupplyAssets, totalSupplyShares, totalBorrowAssets, totalBorrowShares] =
+    marketResult as [bigint, bigint, bigint, bigint];
+
+  const deposited = collateral; // WETH in raw wei
+
+  // Convert borrowShares to USDC assets: borrowAssets = borrowShares * totalBorrowAssets / totalBorrowShares
+  let borrowed = 0n;
+  if (totalBorrowShares > 0n && borrowShares > 0n) {
+    // Round up to be conservative (user owes at least this much)
+    borrowed = (borrowShares * totalBorrowAssets + totalBorrowShares - 1n) / totalBorrowShares;
+  }
+
+  const hasPosition = deposited > 0n || borrowed > 0n;
+
+  // Derive WETH price from Aave oracle (still available even if position is on Morpho)
+  let wethPriceUsd = 0;
+  let collateralUsd = 0;
+  let debtUsd = 0;
+  try {
+    const [totalCollateralBase] = await publicClient.readContract({
+      address: POOLS.AAVE_V3,
+      abi: AAVE_POOL_ABI,
+      functionName: 'getUserAccountData',
+      args: [safeAddr],
+    });
+    // If Aave still has some dust, use that. Otherwise read WETH price from Aave reserve.
+    // Simpler: use Aave's price feed via a small test
+    const aaveWethReserve = await publicClient.readContract({
+      address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI,
+      functionName: 'getReserveData', args: [TOKENS.WETH],
+    });
+    // Aave doesn't expose price directly, but we can estimate from market data
+    // For now, use a simpler approach: collateral value from Morpho's perspective
+  } catch { /* ignore */ }
+
+  // Compute USD values using a simple price derivation
+  // Morpho LLTV = 0.86, if we know borrowed USDC ($1 each), we can derive collateral value
+  // But cleaner: read WETH price from the Morpho oracle
+  try {
+    // Morpho oracle returns price in 36 decimals (USDC/WETH)
+    // price = oracle.price() where 1 WETH = price / 1e36 USDC (adjusted for token decimals)
+    const oraclePrice = await publicClient.readContract({
+      address: MORPHO_MARKET.oracle,
+      abi: [{
+        name: 'price',
+        type: 'function',
+        inputs: [],
+        outputs: [{ type: 'uint256' }],
+        stateMutability: 'view',
+      }] as const,
+      functionName: 'price',
+    }) as bigint;
+    // Morpho oracle price = (USDC per WETH) * 10^(36 + loanDecimals - collateralDecimals)
+    // = (USDC per WETH) * 10^(36 + 6 - 18) = (USDC per WETH) * 10^24
+    // So: priceUsd = oraclePrice / 10^24
+    wethPriceUsd = Number(oraclePrice) / 1e24;
+    collateralUsd = (Number(deposited) / 1e18) * wethPriceUsd;
+    debtUsd = Number(borrowed) / 1e6;
+  } catch (err) {
+    logger.warn({ err }, 'Failed to read Morpho oracle price');
+    debtUsd = Number(borrowed) / 1e6;
+  }
+
+  // Compute health factor: HF = (collateral * LLTV * price) / debt
+  // In Morpho terms: HF = (collateral_value * LLTV) / debt_value
+  let healthFactor = 0;
+  if (borrowed > 0n && collateralUsd > 0) {
+    const lltvDecimal = Number(MORPHO_MARKET.lltv) / 1e18;
+    healthFactor = (collateralUsd * lltvDecimal) / debtUsd;
+    healthFactor = Math.round(healthFactor * 100) / 100;
+  }
+
+  // Compute borrowable: maxBorrow = collateral_value * LLTV - current_debt
+  const lltvDecimal = Number(MORPHO_MARKET.lltv) / 1e18;
+  const maxBorrowUsd = collateralUsd * lltvDecimal;
+  const borrowableUsd = Math.max(0, maxBorrowUsd - debtUsd);
+  const borrowableUsdc = BigInt(Math.floor(borrowableUsd * 1e6));
+
+  // Compute withdrawable: similar to Aave, keep HF >= 1.05
+  let withdrawable = deposited;
+  if (borrowed > 0n && deposited > 0n && collateralUsd > 0) {
+    // minCollateralUsd = debtUsd * 1.05 / LLTV
+    const minCollateralUsd = (debtUsd * 1.05) / lltvDecimal;
+    if (collateralUsd > minCollateralUsd) {
+      const excessRatio = (collateralUsd - minCollateralUsd) / collateralUsd;
+      withdrawable = BigInt(Math.floor(Number(deposited) * excessRatio));
+    } else {
+      withdrawable = 0n;
+    }
+  }
+
+  return {
+    position: {
+      collateralUsd: Math.round(collateralUsd * 100) / 100,
+      debtUsd: Math.round(debtUsd * 100) / 100,
+      healthFactor,
+      hasPosition,
+      ltv: lltvDecimal,
+      maxLtv: lltvDecimal,
+      liquidationThreshold: lltvDecimal,
+      protocol: 'Morpho Blue',
+    },
+    // Legacy key — frontend reads this
+    aave: {
+      collateralUsd: Math.round(collateralUsd * 100) / 100,
+      debtUsd: Math.round(debtUsd * 100) / 100,
+      healthFactor,
+      hasPosition,
+      ltv: lltvDecimal,
+      maxLtv: lltvDecimal,
+      liquidationThreshold: lltvDecimal,
+      protocol: 'Morpho Blue',
+    },
+    balances: {
+      weth: {
+        deposited: deposited.toString(),
+        idle: idleWeth.toString(),
         available: withdrawable.toString(),
         withdrawable: withdrawable.toString(),
         decimals: 18,

@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth.js';
 import { deposit, borrow, repay, withdraw, getPositionInfo, simulateAction, getProtocolRates } from '../services/vault.service.js';
-import { forceMigrate } from '../services/monitor.service.js';
+import { forceMigrate, migrationPreflight } from '../services/monitor.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -98,6 +98,20 @@ router.post('/simulate', async (req: Request, res: Response) => {
 
 const migrateSchema = z.object({
   toProtocol: z.enum(['aave_v3', 'morpho_blue']),
+});
+
+/** GET /vault/migrate/preflight — Diagnostic check before migration */
+router.get('/migrate/preflight', async (req: Request, res: Response) => {
+  try {
+    const toProtocol = (req.query.toProtocol as string) || 'morpho_blue';
+    if (toProtocol !== 'aave_v3' && toProtocol !== 'morpho_blue') {
+      return res.status(400).json({ error: 'Invalid toProtocol' });
+    }
+    const result = await migrationPreflight(req.user!.address, toProtocol);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /** POST /vault/migrate — Force-migrate position to another protocol via flashloan */

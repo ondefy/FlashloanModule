@@ -191,6 +191,91 @@ export const MORPHO_BLUE_ABI = [
     ],
     stateMutability: 'view',
   },
+  {
+    type: 'function',
+    name: 'market',
+    inputs: [
+      { name: 'id', type: 'bytes32' },
+    ],
+    outputs: [
+      { name: 'totalSupplyAssets', type: 'uint128' },
+      { name: 'totalSupplyShares', type: 'uint128' },
+      { name: 'totalBorrowAssets', type: 'uint128' },
+      { name: 'totalBorrowShares', type: 'uint128' },
+      { name: 'lastUpdate', type: 'uint128' },
+      { name: 'fee', type: 'uint128' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'repay',
+    inputs: [
+      {
+        name: 'marketParams',
+        type: 'tuple',
+        components: [
+          { name: 'loanToken', type: 'address' },
+          { name: 'collateralToken', type: 'address' },
+          { name: 'oracle', type: 'address' },
+          { name: 'irm', type: 'address' },
+          { name: 'lltv', type: 'uint256' },
+        ],
+      },
+      { name: 'assets', type: 'uint256' },
+      { name: 'shares', type: 'uint256' },
+      { name: 'onBehalf', type: 'address' },
+      { name: 'data', type: 'bytes' },
+    ],
+    outputs: [
+      { name: 'assetsRepaid', type: 'uint256' },
+      { name: 'sharesRepaid', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'withdrawCollateral',
+    inputs: [
+      {
+        name: 'marketParams',
+        type: 'tuple',
+        components: [
+          { name: 'loanToken', type: 'address' },
+          { name: 'collateralToken', type: 'address' },
+          { name: 'oracle', type: 'address' },
+          { name: 'irm', type: 'address' },
+          { name: 'lltv', type: 'uint256' },
+        ],
+      },
+      { name: 'assets', type: 'uint256' },
+      { name: 'onBehalf', type: 'address' },
+      { name: 'receiver', type: 'address' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'idToMarketParams',
+    inputs: [
+      { name: 'id', type: 'bytes32' },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'loanToken', type: 'address' },
+          { name: 'collateralToken', type: 'address' },
+          { name: 'oracle', type: 'address' },
+          { name: 'irm', type: 'address' },
+          { name: 'lltv', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
 ] as const;
 
 export const UNIFIED_MODULE_ABI = [

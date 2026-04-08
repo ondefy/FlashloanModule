@@ -1,8 +1,10 @@
 import {
   createPublicClient,
+  encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
   http,
+  keccak256,
   maxUint256,
   type Address,
   type Hex,
@@ -27,9 +29,21 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const AAVE_BASE_DECIMALS = 8;
 const USDC_DECIMALS = 6;
 const VARIABLE_RATE = 2n;
-const REPAY_BUFFER_MAX_USDC = 1_000_000n; // 1 USDC buffer
+const REPAY_BUFFER_MAX_USDC = 1_000_000n; // 1 USDC max buffer
+const REPAY_BUFFER_BPS = 50n; // 0.5% buffer for interest accrual
+const REPAY_BUFFER_MIN = 100n; // 0.0001 USDC minimum buffer
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
+
+/** Compute Morpho Blue market ID = keccak256(abi.encode(loanToken, collateralToken, oracle, irm, lltv)) */
+function getMorphoMarketId(): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+      [MORPHO_MARKET.loanToken, MORPHO_MARKET.collateralToken, MORPHO_MARKET.oracle, MORPHO_MARKET.irm, MORPHO_MARKET.lltv],
+    ),
+  );
+}
 
 // ─── Daemon Control ──────────────────────────────────────────────────────────
 
@@ -56,6 +70,8 @@ export function stopMonitor(): void {
 // ─── Monitor Cycle ───────────────────────────────────────────────────────────
 
 async function runMonitorCycle(): Promise<void> {
+  logger.info('Monitor cycle starting');
+
   // 1. Check idle WETH in user Safes and auto-supply to Aave
   await checkIdleWethBalances().catch(err =>
     logger.error({ err: err.message }, 'Idle WETH check failed')
@@ -63,7 +79,10 @@ async function runMonitorCycle(): Promise<void> {
 
   // 2. Health check existing positions
   const positions = await getPositionsDueForCheck(500);
-  if (!positions || positions.length === 0) return;
+  if (!positions || positions.length === 0) {
+    logger.info('No positions due for check');
+    return;
+  }
 
   logger.info({ count: positions.length }, 'Checking positions');
 
@@ -249,12 +268,16 @@ export async function migratePosition(
   collateralAmount: bigint,
   debtToken: Address,
   debtAmount: bigint,
+  morphoBorrowShares = 0n,
 ): Promise<{ txHash: string }> {
   const env = getEnv();
   const unifiedModuleAddr = env.UNIFIED_MODULE_ADDRESS as Address;
 
-  // Calculate flashloan amount (debt + buffer for interest accrual)
-  const bufferUsdc = debtAmount >= REPAY_BUFFER_MAX_USDC ? REPAY_BUFFER_MAX_USDC : debtAmount;
+  // Calculate flashloan amount (debt + small buffer for interest accrual)
+  // Old logic used min(debt, 1 USDC) which doubled the borrow for small positions,
+  // exceeding Morpho's LLTV. Use 0.5% of debt instead, clamped to [0.0001, 1] USDC.
+  const bufferBps = debtAmount * REPAY_BUFFER_BPS / 10000n;
+  const bufferUsdc = bufferBps < REPAY_BUFFER_MIN ? REPAY_BUFFER_MIN : (bufferBps > REPAY_BUFFER_MAX_USDC ? REPAY_BUFFER_MAX_USDC : bufferBps);
   const flashloanAmount = debtAmount + bufferUsdc;
 
   let executions: Execution[];
@@ -265,7 +288,7 @@ export async function migratePosition(
     );
   } else if (fromProtocol === 'morpho_blue' && toProtocol === 'aave_v3') {
     executions = buildMorphoToAaveExecutions(
-      safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount,
+      safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount, morphoBorrowShares,
     );
   } else {
     throw new Error(`Unsupported migration: ${fromProtocol} -> ${toProtocol}`);
@@ -366,6 +389,7 @@ export async function forceMigrate(
 
   let collateralAmount: bigint;
   let debtAmount: bigint;
+  let morphoBorrowShares = 0n;
 
   if (position.current_protocol === 'aave_v3') {
     // Read Aave aToken + variableDebtToken balances
@@ -387,13 +411,30 @@ export async function forceMigrate(
     collateralAmount = collBal as bigint;
     debtAmount = debtBal as bigint;
   } else {
-    // Morpho position
-    const morphoPos = await publicClient.readContract({
-      address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'position',
-      args: [MORPHO_MARKET.loanToken, safeAddr], // TODO: use correct market ID
-    });
-    collateralAmount = BigInt(position.collateral_amount || '0');
-    debtAmount = BigInt(position.debt_amount || '0');
+    // Morpho position — read collateral and borrow shares, convert shares to assets
+    const marketId = getMorphoMarketId();
+    const [posResult, marketResult] = await Promise.all([
+      publicClient.readContract({
+        address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'position',
+        args: [marketId, safeAddr],
+      }),
+      publicClient.readContract({
+        address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'market',
+        args: [marketId],
+      }),
+    ]);
+    const [, borrowShares, collateral] = posResult as unknown as [bigint, bigint, bigint];
+    const [, , totalBorrowAssets, totalBorrowShares] = marketResult as unknown as [bigint, bigint, bigint, bigint, bigint, bigint];
+
+    collateralAmount = collateral;
+    // Store exact borrow shares for repay-all (shares are stable across blocks)
+    morphoBorrowShares = borrowShares;
+    // Convert borrow shares to USDC assets (round up — user owes at least this much)
+    if (totalBorrowShares > 0n && borrowShares > 0n) {
+      debtAmount = (borrowShares * totalBorrowAssets + totalBorrowShares - 1n) / totalBorrowShares;
+    } else {
+      debtAmount = 0n;
+    }
   }
 
   if (debtAmount === 0n) throw new Error('No debt to migrate — nothing to flashloan for');
@@ -407,18 +448,213 @@ export async function forceMigrate(
     debt: debtAmount.toString(),
   }, 'Force migration starting');
 
-  return migratePosition(
-    userAddress,
-    user.address,
-    user.safe_address,
-    position.id,
-    position.current_protocol,
-    toProtocol,
-    TOKENS.WETH,
-    collateralAmount,
-    TOKENS.USDC,
-    debtAmount,
-  );
+  try {
+    return await migratePosition(
+      userAddress,
+      user.address,
+      user.safe_address,
+      position.id,
+      position.current_protocol,
+      toProtocol,
+      TOKENS.WETH,
+      collateralAmount,
+      TOKENS.USDC,
+      debtAmount,
+      morphoBorrowShares,
+    );
+  } catch (err: any) {
+    // Extract detailed revert reason from bundler/on-chain error
+    const details = err.details || err.cause?.data?.message || err.cause?.message || '';
+    const shortMessage = err.shortMessage || '';
+    logger.error({
+      userAddress,
+      safeAddress: user.safe_address,
+      error: err.message,
+      shortMessage,
+      details,
+      errorName: err.name,
+      // Pimlico bundler often includes AA revert reason in err.details
+      revertData: err.cause?.data?.errorName || err.cause?.data?.args,
+    }, 'Migration FAILED — detailed error');
+    throw new Error(`Migration failed: ${shortMessage || err.message}. Details: ${details}`);
+  }
+}
+
+// ─── Migration Pre-flight Check ─────────────────────────────────────────────
+
+/**
+ * Run all prerequisite checks before attempting migration.
+ * Returns a diagnostic report with pass/fail for each check.
+ */
+export async function migrationPreflight(
+  userAddress: string,
+  toProtocol: 'aave_v3' | 'morpho_blue',
+) {
+  const env = getEnv();
+  const { getUser, getActivePositions, getSessionKey } = await import('../db/supabase.js');
+  const user = await getUser(userAddress);
+  if (!user?.safe_address) throw new Error('No Safe address');
+
+  const publicClient = createPublicClient({ chain: base, transport: http(env.BASE_RPC_URL) });
+  const safeAddr = user.safe_address as Address;
+  const unifiedModuleAddr = env.UNIFIED_MODULE_ADDRESS as Address;
+  const guardedModuleAddr = env.GUARDED_EXEC_MODULE_ADDRESS as Address;
+  const registryAddr = env.TARGET_REGISTRY_ADDRESS as Address;
+
+  const checks: Record<string, { pass: boolean; detail: string }> = {};
+
+  // 1. Check UnifiedFlashloanModule is installed as executor on the Safe
+  try {
+    const isInstalled = await publicClient.readContract({
+      address: safeAddr,
+      abi: [{
+        name: 'isModuleInstalled',
+        type: 'function',
+        inputs: [
+          { name: 'moduleTypeId', type: 'uint256' },
+          { name: 'module', type: 'address' },
+          { name: 'additionalContext', type: 'bytes' },
+        ],
+        outputs: [{ type: 'bool' }],
+        stateMutability: 'view',
+      }] as const,
+      functionName: 'isModuleInstalled',
+      args: [2n, unifiedModuleAddr, '0x' as Hex], // typeId 2 = executor
+    });
+    checks['unifiedModule_installed'] = { pass: !!isInstalled, detail: `installed=${isInstalled}` };
+  } catch (err: any) {
+    checks['unifiedModule_installed'] = { pass: false, detail: `error: ${err.message}` };
+  }
+
+  // 2. Check GuardedExecModule is installed
+  try {
+    const isInstalled = await publicClient.readContract({
+      address: safeAddr,
+      abi: [{
+        name: 'isModuleInstalled',
+        type: 'function',
+        inputs: [
+          { name: 'moduleTypeId', type: 'uint256' },
+          { name: 'module', type: 'address' },
+          { name: 'additionalContext', type: 'bytes' },
+        ],
+        outputs: [{ type: 'bool' }],
+        stateMutability: 'view',
+      }] as const,
+      functionName: 'isModuleInstalled',
+      args: [2n, guardedModuleAddr, '0x' as Hex],
+    });
+    checks['guardedModule_installed'] = { pass: !!isInstalled, detail: `installed=${isInstalled}` };
+  } catch (err: any) {
+    checks['guardedModule_installed'] = { pass: false, detail: `error: ${err.message}` };
+  }
+
+  // 3. Check session key state (ENABLE vs USE mode)
+  try {
+    const sessionKeyData = await getSessionKey(userAddress);
+    const encryptedKeyData = sessionKeyData.encrypted_key as any;
+    const hasEnableSig = !!encryptedKeyData.permission_enable_sig;
+    checks['session_mode'] = {
+      pass: !hasEnableSig,
+      detail: hasEnableSig
+        ? 'ENABLE mode (permission_enable_sig still present — session may not be enabled on-chain)'
+        : 'USE mode (session enabled on-chain)',
+    };
+  } catch (err: any) {
+    checks['session_key'] = { pass: false, detail: `error: ${err.message}` };
+  }
+
+  // 4. Check Aave position
+  try {
+    const [wethReserve, usdcReserve] = await Promise.all([
+      publicClient.readContract({
+        address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI, functionName: 'getReserveData', args: [TOKENS.WETH],
+      }),
+      publicClient.readContract({
+        address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI, functionName: 'getReserveData', args: [TOKENS.USDC],
+      }),
+    ]);
+    const aTokenAddr = (wethReserve as any).aTokenAddress as Address;
+    const debtAddr = (usdcReserve as any).variableDebtTokenAddress as Address;
+
+    const [collBal, debtBal] = await Promise.all([
+      publicClient.readContract({ address: aTokenAddr, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }),
+      publicClient.readContract({ address: debtAddr, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }),
+    ]);
+    checks['aave_position'] = {
+      pass: (collBal as bigint) > 0n && (debtBal as bigint) > 0n,
+      detail: `collateral=${(collBal as bigint).toString()}, debt=${(debtBal as bigint).toString()}`,
+    };
+  } catch (err: any) {
+    checks['aave_position'] = { pass: false, detail: `error: ${err.message}` };
+  }
+
+  // 5. Check TargetRegistry whitelist for all migration selectors
+  const REGISTRY_ABI = [{
+    name: 'whitelist',
+    type: 'function',
+    inputs: [{ name: 'target', type: 'address' }, { name: 'selector', type: 'bytes4' }],
+    outputs: [{ type: 'bool' }],
+    stateMutability: 'view',
+  }] as const;
+
+  const selectorChecks = [
+    { name: 'USDC.approve', target: TOKENS.USDC, selector: '0x095ea7b3' as Hex },
+    { name: 'USDC.transfer', target: TOKENS.USDC, selector: '0xa9059cbb' as Hex },
+    { name: 'WETH.approve', target: TOKENS.WETH, selector: '0x095ea7b3' as Hex },
+    { name: 'Aave.repay', target: POOLS.AAVE_V3, selector: '0x573ade81' as Hex },
+    { name: 'Aave.withdraw', target: POOLS.AAVE_V3, selector: '0x69328dec' as Hex },
+    { name: 'Morpho.supplyCollateral', target: POOLS.MORPHO_BLUE, selector: '0x238d6579' as Hex },
+    { name: 'Morpho.borrow', target: POOLS.MORPHO_BLUE, selector: '0x50d8cd4b' as Hex },
+    { name: 'UnifiedModule.initiateFlashloan', target: unifiedModuleAddr, selector: '0xa9a8aeb4' as Hex },
+  ];
+
+  for (const check of selectorChecks) {
+    try {
+      const whitelisted = await publicClient.readContract({
+        address: registryAddr,
+        abi: REGISTRY_ABI,
+        functionName: 'whitelist',
+        args: [check.target, check.selector],
+      });
+      checks[`whitelist_${check.name}`] = { pass: !!whitelisted, detail: `${check.target}:${check.selector}=${whitelisted}` };
+    } catch (err: any) {
+      checks[`whitelist_${check.name}`] = { pass: false, detail: `error: ${err.message}` };
+    }
+  }
+
+  // 6. Check UnifiedModule's own registry matches TargetRegistry
+  try {
+    const moduleRegistry = await publicClient.readContract({
+      address: unifiedModuleAddr,
+      abi: UNIFIED_MODULE_ABI,
+      functionName: 'registry',
+    });
+    const match = (moduleRegistry as string).toLowerCase() === registryAddr.toLowerCase();
+    checks['module_registry_match'] = {
+      pass: match,
+      detail: `module.registry=${moduleRegistry}, expected=${registryAddr}`,
+    };
+  } catch (err: any) {
+    checks['module_registry_match'] = { pass: false, detail: `error: ${err.message}` };
+  }
+
+  // 7. Check DB position
+  const positions = await getActivePositions(userAddress);
+  if (positions && positions.length > 0) {
+    const pos = positions[0];
+    checks['db_position'] = {
+      pass: pos.current_protocol !== toProtocol,
+      detail: `current=${pos.current_protocol}, target=${toProtocol}, collateral=${pos.collateral_amount}, debt=${pos.debt_amount}`,
+    };
+  } else {
+    checks['db_position'] = { pass: false, detail: 'No active position in DB' };
+  }
+
+  const allPassed = Object.values(checks).every(c => c.pass);
+  const failures = Object.entries(checks).filter(([, c]) => !c.pass).map(([name, c]) => `${name}: ${c.detail}`);
+
+  return { allPassed, checks, failures, safeAddress: safeAddr, userAddress };
 }
 
 // ─── Execution Builders ──────────────────────────────────────────────────────
@@ -478,16 +714,50 @@ function buildMorphoToAaveExecutions(
   collateralAmount: bigint,
   debtToken: Address,
   flashloanAmount: bigint,
+  borrowShares: bigint,
 ): Execution[] {
-  // TODO: Add Morpho withdrawCollateral and repay ABIs
-  // For now, this is the reverse of Aave->Morpho
+  // Use exact borrow shares for repay-all. Morpho doesn't support maxUint256 (uint128 overflow).
+  // Shares are stable across blocks (interest changes the conversion ratio, not the shares).
   return [
-    // 1. Approve USDC to Morpho (to repay Morpho debt)
+    // 1. Approve flashloaned USDC to Morpho (to repay Morpho debt)
     {
       target: debtToken, value: 0n,
       callData: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [POOLS.MORPHO_BLUE, flashloanAmount] }),
     },
-    // 2-6: TODO - Morpho repay, withdraw collateral, supply to Aave, borrow from Aave
-    // This requires Morpho's repay and withdrawCollateral functions
+    // 2. Repay all Morpho debt using exact borrow shares (assets=0, shares=exact)
+    {
+      target: POOLS.MORPHO_BLUE, value: 0n,
+      callData: encodeFunctionData({
+        abi: MORPHO_BLUE_ABI, functionName: 'repay',
+        args: [MORPHO_MARKET, 0n, borrowShares, safeAddr, '0x'],
+      }),
+    },
+    // 3. Withdraw all collateral from Morpho
+    {
+      target: POOLS.MORPHO_BLUE, value: 0n,
+      callData: encodeFunctionData({
+        abi: MORPHO_BLUE_ABI, functionName: 'withdrawCollateral',
+        args: [MORPHO_MARKET, collateralAmount, safeAddr, safeAddr],
+      }),
+    },
+    // 4. Approve WETH to Aave
+    {
+      target: collateralToken, value: 0n,
+      callData: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [POOLS.AAVE_V3, collateralAmount] }),
+    },
+    // 5. Supply WETH to Aave
+    {
+      target: POOLS.AAVE_V3, value: 0n,
+      callData: encodeFunctionData({
+        abi: AAVE_POOL_ABI, functionName: 'supply', args: [collateralToken, collateralAmount, safeAddr, 0],
+      }),
+    },
+    // 6. Borrow USDC from Aave to repay flashloan
+    {
+      target: POOLS.AAVE_V3, value: 0n,
+      callData: encodeFunctionData({
+        abi: AAVE_POOL_ABI, functionName: 'borrow', args: [debtToken, flashloanAmount, VARIABLE_RATE, 0, safeAddr],
+      }),
+    },
   ];
 }
