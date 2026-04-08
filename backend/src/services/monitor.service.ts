@@ -20,6 +20,7 @@ import {
   getSupabase,
 } from '../db/supabase.js';
 import { executeGuardedBatch, type Execution } from './session-executor.service.js';
+import { supplyWethToAave } from './vault.service.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -55,6 +56,12 @@ export function stopMonitor(): void {
 // ─── Monitor Cycle ───────────────────────────────────────────────────────────
 
 async function runMonitorCycle(): Promise<void> {
+  // 1. Check idle WETH in user Safes and auto-supply to Aave
+  await checkIdleWethBalances().catch(err =>
+    logger.error({ err: err.message }, 'Idle WETH check failed')
+  );
+
+  // 2. Health check existing positions
   const positions = await getPositionsDueForCheck(500);
   if (!positions || positions.length === 0) return;
 
@@ -70,6 +77,53 @@ async function runMonitorCycle(): Promise<void> {
       await checkAndUpdatePosition(publicClient, pos);
     } catch (err: any) {
       logger.error({ positionId: pos.id, err: err.message }, 'Failed to check position');
+    }
+  }
+}
+
+// ─── Idle WETH Auto-Supply ──────────────────────────────────────────────────
+// Check all onboarded users' Safes for idle WETH and auto-supply to Aave
+
+const MIN_WETH_TO_SUPPLY = BigInt('100000000000000'); // 0.0001 WETH (avoid dust)
+
+async function checkIdleWethBalances(): Promise<void> {
+  const supabase = getSupabase();
+
+  // Get all fully onboarded users with Safes and active session keys
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('address, safe_address')
+    .eq('onboarding_step', 3)
+    .eq('is_active', true)
+    .not('safe_address', 'is', null);
+
+  if (error || !users || users.length === 0) return;
+
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(getEnv().BASE_RPC_URL),
+  });
+
+  for (const user of users) {
+    try {
+      const wethBalance = await publicClient.readContract({
+        address: TOKENS.WETH,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [user.safe_address as Address],
+      }) as bigint;
+
+      if (wethBalance >= MIN_WETH_TO_SUPPLY) {
+        logger.info({
+          userAddress: user.address,
+          safeAddress: user.safe_address,
+          wethBalance: wethBalance.toString(),
+        }, 'Idle WETH detected in Safe, auto-supplying to Aave');
+
+        await supplyWethToAave(user.address, user.address, user.safe_address, wethBalance);
+      }
+    } catch (err: any) {
+      logger.error({ userAddress: user.address, err: err.message }, 'Failed to check/supply idle WETH');
     }
   }
 }
@@ -199,11 +253,51 @@ export async function migratePosition(
   const env = getEnv();
   const unifiedModuleAddr = env.UNIFIED_MODULE_ADDRESS as Address;
 
-  // Calculate flashloan amount (debt + buffer)
+  // Calculate flashloan amount (debt + buffer for interest accrual)
   const bufferUsdc = debtAmount >= REPAY_BUFFER_MAX_USDC ? REPAY_BUFFER_MAX_USDC : debtAmount;
   const flashloanAmount = debtAmount + bufferUsdc;
 
-  const logId = await insertTransactionLog({
+  let executions: Execution[];
+
+  if (fromProtocol === 'aave_v3' && toProtocol === 'morpho_blue') {
+    executions = buildAaveToMorphoExecutions(
+      safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount,
+    );
+  } else if (fromProtocol === 'morpho_blue' && toProtocol === 'aave_v3') {
+    executions = buildMorphoToAaveExecutions(
+      safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount,
+    );
+  } else {
+    throw new Error(`Unsupported migration: ${fromProtocol} -> ${toProtocol}`);
+  }
+
+  // Build the initiateFlashloan call and wrap in GuardedExecModule batch
+  const initiateCalldata = encodeFunctionData({
+    abi: UNIFIED_MODULE_ABI,
+    functionName: 'initiateFlashloan',
+    args: [0, debtToken, flashloanAmount, executions], // 0 = MORPHO provider (0% fee)
+  });
+
+  const outerExecutions: Execution[] = [{
+    target: unifiedModuleAddr,
+    value: 0n,
+    callData: initiateCalldata as Hex,
+  }];
+
+  // Execute on-chain FIRST — only write to Supabase after confirmed success
+  const result = await executeGuardedBatch(userAddress, ownerAddress, safeAddress, outerExecutions);
+
+  // On-chain tx confirmed — now safe to update DB
+  const supabase = getSupabase();
+
+  const { data: posData } = await supabase.from('positions').select('migration_count').eq('id', positionId).single();
+  await supabase.from('positions').update({
+    current_protocol: toProtocol,
+    migration_count: (posData?.migration_count ?? 0) + 1,
+    updated_at: new Date().toISOString(),
+  }).eq('id', positionId);
+
+  await insertTransactionLog({
     user_address: userAddress,
     safe_address: safeAddress,
     position_id: positionId,
@@ -211,7 +305,9 @@ export async function migratePosition(
     protocol: toProtocol,
     token_address: debtToken,
     amount: flashloanAmount.toString(),
-    status: 'pending',
+    status: 'confirmed',
+    tx_hash: result.txHash,
+    user_op_hash: result.userOpHash,
     metadata: {
       from_protocol: fromProtocol,
       to_protocol: toProtocol,
@@ -221,77 +317,108 @@ export async function migratePosition(
     },
   });
 
-  try {
-    let executions: Execution[];
+  await supabase.from('migration_history').insert({
+    position_id: positionId,
+    user_address: userAddress.toLowerCase(),
+    from_protocol: fromProtocol,
+    to_protocol: toProtocol,
+    collateral_token: collateralToken.toLowerCase(),
+    collateral_amount: collateralAmount.toString(),
+    debt_token: debtToken.toLowerCase(),
+    debt_amount: debtAmount.toString(),
+    flashloan_provider: 'morpho_blue',
+    flashloan_token: debtToken.toLowerCase(),
+    flashloan_amount: flashloanAmount.toString(),
+    flashloan_fee: '0',
+    tx_hash: result.txHash,
+    status: 'completed',
+  });
 
-    if (fromProtocol === 'aave_v3' && toProtocol === 'morpho_blue') {
-      executions = buildAaveToMorphoExecutions(
-        safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount,
-      );
-    } else if (fromProtocol === 'morpho_blue' && toProtocol === 'aave_v3') {
-      executions = buildMorphoToAaveExecutions(
-        safeAddress as Address, collateralToken, collateralAmount, debtToken, flashloanAmount,
-      );
-    } else {
-      throw new Error(`Unsupported migration: ${fromProtocol} -> ${toProtocol}`);
-    }
+  logger.info({ userAddress, positionId, txHash: result.txHash, fromProtocol, toProtocol }, 'Migration completed');
+  return { txHash: result.txHash };
+}
 
-    // Build the initiateFlashloan call and wrap in GuardedExecModule batch
-    const initiateCalldata = encodeFunctionData({
-      abi: UNIFIED_MODULE_ABI,
-      functionName: 'initiateFlashloan',
-      args: [0, debtToken, flashloanAmount, executions], // 0 = MORPHO provider (0% fee)
-    });
+// ─── Force Migrate (API-triggered) ──────────────────────────────────────────
 
-    // The outer execution is: call UnifiedFlashloanModule.initiateFlashloan via GuardedExecModule
-    const outerExecutions: Execution[] = [{
-      target: unifiedModuleAddr,
-      value: 0n,
-      callData: initiateCalldata as Hex,
-    }];
+/**
+ * Force-migrate a user's position from current protocol to target protocol.
+ * Reads current collateral/debt amounts from on-chain, then executes atomic swap.
+ */
+export async function forceMigrate(
+  userAddress: string,
+  toProtocol: 'aave_v3' | 'morpho_blue',
+): Promise<{ txHash: string }> {
+  const { getUser, getActivePositions } = await import('../db/supabase.js');
+  const user = await getUser(userAddress);
+  if (!user?.safe_address) throw new Error('No Safe address');
 
-    const result = await executeGuardedBatch(userAddress, ownerAddress, safeAddress, outerExecutions);
+  const positions = await getActivePositions(userAddress);
+  if (!positions || positions.length === 0) throw new Error('No active position to migrate');
+  const position = positions[0];
 
-    // Update position protocol in DB
-    const supabase = getSupabase();
-    await supabase.from('positions').update({
-      current_protocol: toProtocol,
-      migration_count: (pos => (pos?.migration_count ?? 0) + 1)(
-        (await supabase.from('positions').select('migration_count').eq('id', positionId).single()).data
-      ),
-      updated_at: new Date().toISOString(),
-    }).eq('id', positionId);
-
-    await updateTransactionLog(logId, {
-      status: 'confirmed',
-      tx_hash: result.txHash,
-      user_op_hash: result.userOpHash,
-    });
-
-    // Insert migration history
-    await supabase.from('migration_history').insert({
-      position_id: positionId,
-      user_address: userAddress.toLowerCase(),
-      from_protocol: fromProtocol,
-      to_protocol: toProtocol,
-      collateral_token: collateralToken.toLowerCase(),
-      collateral_amount: collateralAmount.toString(),
-      debt_token: debtToken.toLowerCase(),
-      debt_amount: debtAmount.toString(),
-      flashloan_provider: 'morpho_blue',
-      flashloan_token: debtToken.toLowerCase(),
-      flashloan_amount: flashloanAmount.toString(),
-      flashloan_fee: '0',
-      tx_hash: result.txHash,
-      status: 'completed',
-    });
-
-    logger.info({ userAddress, positionId, txHash: result.txHash, fromProtocol, toProtocol }, 'Migration completed');
-    return { txHash: result.txHash };
-  } catch (err: any) {
-    await updateTransactionLog(logId, { status: 'failed', error_message: err.message });
-    throw err;
+  if (position.current_protocol === toProtocol) {
+    throw new Error(`Position already on ${toProtocol}`);
   }
+
+  // Read actual on-chain balances for the migration
+  const publicClient = createPublicClient({ chain: base, transport: http(getEnv().BASE_RPC_URL) });
+  const safeAddr = user.safe_address as Address;
+
+  let collateralAmount: bigint;
+  let debtAmount: bigint;
+
+  if (position.current_protocol === 'aave_v3') {
+    // Read Aave aToken + variableDebtToken balances
+    const [wethReserve, usdcReserve] = await Promise.all([
+      publicClient.readContract({
+        address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI, functionName: 'getReserveData', args: [TOKENS.WETH],
+      }),
+      publicClient.readContract({
+        address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI, functionName: 'getReserveData', args: [TOKENS.USDC],
+      }),
+    ]);
+    const aTokenAddr = (wethReserve as any).aTokenAddress as Address;
+    const debtAddr = (usdcReserve as any).variableDebtTokenAddress as Address;
+
+    const [collBal, debtBal] = await Promise.all([
+      publicClient.readContract({ address: aTokenAddr, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }),
+      publicClient.readContract({ address: debtAddr, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }),
+    ]);
+    collateralAmount = collBal as bigint;
+    debtAmount = debtBal as bigint;
+  } else {
+    // Morpho position
+    const morphoPos = await publicClient.readContract({
+      address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'position',
+      args: [MORPHO_MARKET.loanToken, safeAddr], // TODO: use correct market ID
+    });
+    collateralAmount = BigInt(position.collateral_amount || '0');
+    debtAmount = BigInt(position.debt_amount || '0');
+  }
+
+  if (debtAmount === 0n) throw new Error('No debt to migrate — nothing to flashloan for');
+  if (collateralAmount === 0n) throw new Error('No collateral to migrate');
+
+  logger.info({
+    userAddress,
+    from: position.current_protocol,
+    to: toProtocol,
+    collateral: collateralAmount.toString(),
+    debt: debtAmount.toString(),
+  }, 'Force migration starting');
+
+  return migratePosition(
+    userAddress,
+    user.address,
+    user.safe_address,
+    position.id,
+    position.current_protocol,
+    toProtocol,
+    TOKENS.WETH,
+    collateralAmount,
+    TOKENS.USDC,
+    debtAmount,
+  );
 }
 
 // ─── Execution Builders ──────────────────────────────────────────────────────

@@ -27,8 +27,11 @@ import {
   SmartSessionMode,
   getPermissionId,
   encodeValidationData,
+  getSudoPolicy,
+  getEnableSessionDetails,
   type Session,
 } from '@rhinestone/module-sdk';
+import { toFunctionSelector, getAbiItem } from 'viem';
 import pino from 'pino';
 import { getEnv } from '../config/env.js';
 import { INFRA } from '../config/addresses.js';
@@ -64,8 +67,12 @@ export async function executeGuardedBatch(
 
   // 1. Decrypt session key from Supabase
   const sessionKeyData = await getSessionKey(userAddress);
-  const sessionKeyPk = decryptSessionKey(sessionKeyData.encrypted_key, userAddress);
+  const encryptedKeyData = sessionKeyData.encrypted_key as any;
+  const sessionKeyPk = decryptSessionKey(encryptedKeyData, userAddress);
   const sessionOwner = privateKeyToAccount(sessionKeyPk as Hex);
+
+  // Check if we have a stored permission_enable_sig (onboarding flow — session not yet enabled on-chain)
+  const permissionEnableSig = encryptedKeyData.permission_enable_sig as Hex | undefined;
 
   // 2. Create stub owner (no signing, just address)
   const owner = toAccount({
@@ -116,7 +123,7 @@ export async function executeGuardedBatch(
     args: [executions],
   });
 
-  // 6. Build session details for "use" mode
+  // 6. Build session config — MUST match how it was created in onboarding/create-session-key
   const smartSessions = getSmartSessionsValidator({});
   const account = getAccount({ address: safeAccount.address, type: 'safe' });
 
@@ -126,24 +133,52 @@ export async function executeGuardedBatch(
     key: encodeValidatorNonce({ account, validator: smartSessions }),
   });
 
-  // Reconstruct session to compute permissionId
+  const executeGuardedBatchSelector = toFunctionSelector(
+    getAbiItem({ abi: GUARDED_EXEC_MODULE_ABI, name: 'executeGuardedBatch' }),
+  ) as Hex;
+
   const session: Session = {
     sessionValidator: OWNABLE_VALIDATOR_ADDRESS,
     sessionValidatorInitData: encodeValidationData({ threshold: 1, owners: [sessionOwner.address] }),
     salt: toHex(toBytes('0', { size: 32 })),
-    userOpPolicies: [],
+    userOpPolicies: [getSudoPolicy()],
     erc7739Policies: { allowedERC7739Content: [], erc1271Policies: [] },
-    actions: [],
+    actions: [{
+      actionTarget: guardedModuleAddr,
+      actionTargetSelector: executeGuardedBatchSelector,
+      actionPolicies: [getSudoPolicy()],
+    }],
     chainId: BigInt(base.id),
     permitERC4337Paymaster: true,
   };
-  const permissionId = getPermissionId({ session });
 
-  const sessionDetails = {
-    mode: SmartSessionMode.USE,
-    permissionId,
-    signature: getOwnableValidatorMockSignature({ threshold: 1 }),
-  };
+  let sessionDetails: any;
+
+  if (permissionEnableSig) {
+    // ENABLE mode: session created via onboarding but not yet enabled on-chain
+    // First UserOp enables the session + executes the action in one shot
+    logger.info({ userAddress }, 'Using ENABLE mode (first use of session key)');
+
+    // @ts-ignore
+    const enableDetails = await getEnableSessionDetails({
+      sessions: [session],
+      account,
+      clients: [publicClient] as any,
+    });
+
+    // Attach the owner's signature that was stored during onboarding
+    enableDetails.enableSessionData.enableSession.permissionEnableSig = permissionEnableSig;
+    enableDetails.signature = getOwnableValidatorMockSignature({ threshold: 1 });
+    sessionDetails = enableDetails;
+  } else {
+    // USE mode: session already enabled on-chain
+    const permissionId = getPermissionId({ session });
+    sessionDetails = {
+      mode: SmartSessionMode.USE,
+      permissionId,
+      signature: getOwnableValidatorMockSignature({ threshold: 1 }),
+    };
+  }
 
   // 7. Prepare UserOperation
   // @ts-ignore
@@ -172,6 +207,22 @@ export async function executeGuardedBatch(
   // 10. Wait for receipt
   const receipt = await pimlicoClient.waitForUserOperationReceipt({ hash: userOpHash });
   const txHash = receipt.receipt.transactionHash;
+
+  // 11. If ENABLE mode succeeded, remove permission_enable_sig so future calls use USE mode
+  if (permissionEnableSig) {
+    try {
+      const { getSupabase } = await import('../db/supabase.js');
+      const supabase = getSupabase();
+      const { iv, authTag, ciphertext } = encryptedKeyData;
+      await supabase
+        .from('session_keys')
+        .update({ encrypted_key: { iv, authTag, ciphertext } })
+        .eq('user_address', userAddress.toLowerCase());
+      logger.info({ userAddress }, 'Session enabled on-chain, switched to USE mode for future calls');
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'Failed to clear permission_enable_sig');
+    }
+  }
 
   logger.info({ userAddress, txHash }, 'UserOp confirmed');
   return { txHash, userOpHash };

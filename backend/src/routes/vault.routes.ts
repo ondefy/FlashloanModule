@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth.js';
-import { deposit, borrow, repay, withdraw, getPositionInfo } from '../services/vault.service.js';
+import { deposit, borrow, repay, withdraw, getPositionInfo, simulateAction, getProtocolRates } from '../services/vault.service.js';
+import { forceMigrate } from '../services/monitor.service.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -68,11 +69,53 @@ router.post('/withdraw', async (req: Request, res: Response) => {
   }
 });
 
-/** GET /vault/position — Current position details */
+/** GET /vault/position — Current position details with balances and limits */
 router.get('/position', async (req: Request, res: Response) => {
   try {
     const info = await getPositionInfo(req.user!.address);
     res.json(info);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const simulateSchema = z.object({
+  action: z.enum(['deposit', 'withdraw', 'borrow', 'repay']),
+  amount: z.string().min(1),
+  token: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+});
+
+/** POST /vault/simulate — Preview health factor after an action */
+router.post('/simulate', async (req: Request, res: Response) => {
+  try {
+    const { action, amount, token } = simulateSchema.parse(req.body);
+    const result = await simulateAction(req.user!.address, action, BigInt(amount), token);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const migrateSchema = z.object({
+  toProtocol: z.enum(['aave_v3', 'morpho_blue']),
+});
+
+/** POST /vault/migrate — Force-migrate position to another protocol via flashloan */
+router.post('/migrate', async (req: Request, res: Response) => {
+  try {
+    const { toProtocol } = migrateSchema.parse(req.body);
+    const result = await forceMigrate(req.user!.address, toProtocol);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /vault/rates — Current protocol APYs */
+router.get('/rates', async (_req: Request, res: Response) => {
+  try {
+    const rates = await getProtocolRates();
+    res.json(rates);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
