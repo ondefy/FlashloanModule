@@ -181,8 +181,67 @@ export async function deposit(userAddress: string, tokenAddress: string, amount:
   if (!user || user.onboarding_step < 3) throw new Error('User not fully onboarded');
   if (!user.safe_address) throw new Error('No Safe address');
 
-  // Supply the WETH that's already in the Safe to Aave
+  // Check current protocol to supply to the right place
+  let currentProtocol = 'aave_v3';
+  try {
+    const positions = await getActivePositions(userAddress);
+    if (positions && positions.length > 0) {
+      currentProtocol = positions[0].current_protocol;
+    }
+  } catch { /* default to aave_v3 */ }
+
+  if (currentProtocol === 'morpho_blue') {
+    return supplyWethToMorpho(userAddress, user.address, user.safe_address, amount);
+  }
   return supplyWethToAave(userAddress, user.address, user.safe_address, amount);
+}
+
+// ─── Supply WETH to Morpho ───────────────────────────────────────────────────
+
+async function supplyWethToMorpho(
+  userAddress: string,
+  ownerAddress: string,
+  safeAddress: string,
+  amount: bigint,
+) {
+  const safeAddr = safeAddress as Address;
+
+  const executions: Execution[] = [
+    {
+      target: TOKENS.WETH,
+      value: 0n,
+      callData: encodeFunctionData({
+        abi: ERC20_ABI, functionName: 'approve', args: [POOLS.MORPHO_BLUE, amount],
+      }),
+    },
+    {
+      target: POOLS.MORPHO_BLUE,
+      value: 0n,
+      callData: encodeFunctionData({
+        abi: MORPHO_BLUE_ABI, functionName: 'supplyCollateral',
+        args: [MORPHO_MARKET, amount, safeAddr, '0x'],
+      }),
+    },
+  ];
+
+  const result = await executeGuardedBatch(userAddress, ownerAddress, safeAddress, executions);
+
+  const position = await ensurePositionExists(userAddress, safeAddress);
+
+  await insertTransactionLog({
+    user_address: userAddress,
+    safe_address: safeAddress,
+    tx_type: 'deposit',
+    protocol: 'morpho_blue',
+    token_address: TOKENS.WETH,
+    amount: amount.toString(),
+    status: 'confirmed',
+    tx_hash: result.txHash,
+    user_op_hash: result.userOpHash,
+  });
+
+  logger.info({ userAddress, txHash: result.txHash, amount: amount.toString() }, 'WETH supplied to Morpho');
+  return { txHash: result.txHash, positionId: position.id, protocol: 'morpho_blue' };
 }
 
 // ─── Borrow ──────────────────────────────────────────────────────────────────
@@ -270,27 +329,76 @@ export async function repay(userAddress: string, amount: bigint) {
   const safeAddr = user.safe_address as Address;
   const position = await ensurePositionExists(userAddress, user.safe_address);
 
-  if (position.current_protocol !== 'aave_v3') {
-    throw new Error('Morpho repay not yet implemented');
-  }
+  let executions: Execution[];
 
-  const executions: Execution[] = [
-    {
-      target: TOKENS.USDC,
-      value: 0n,
-      callData: encodeFunctionData({
-        abi: ERC20_ABI, functionName: 'approve', args: [POOLS.AAVE_V3, amount],
+  if (position.current_protocol === 'aave_v3') {
+    executions = [
+      {
+        target: TOKENS.USDC,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: ERC20_ABI, functionName: 'approve', args: [POOLS.AAVE_V3, amount],
+        }),
+      },
+      {
+        target: POOLS.AAVE_V3,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: AAVE_POOL_ABI, functionName: 'repay',
+          args: [TOKENS.USDC, amount, VARIABLE_RATE, safeAddr],
+        }),
+      },
+    ];
+  } else {
+    // Morpho repay: compute exact borrow shares for the amount, then repay by shares.
+    // Using shares avoids arithmetic overflow issues in Morpho's assets-to-shares conversion.
+    const publicClient = getPublicClient();
+    const marketId = getMorphoMarketId();
+
+    const [posResult, marketResult] = await Promise.all([
+      publicClient.readContract({
+        address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'position',
+        args: [marketId, safeAddr],
       }),
-    },
-    {
-      target: POOLS.AAVE_V3,
-      value: 0n,
-      callData: encodeFunctionData({
-        abi: AAVE_POOL_ABI, functionName: 'repay',
-        args: [TOKENS.USDC, amount, VARIABLE_RATE, safeAddr],
+      publicClient.readContract({
+        address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'market',
+        args: [marketId],
       }),
-    },
-  ];
+    ]);
+    const [, userBorrowShares] = posResult as unknown as [bigint, bigint, bigint];
+    const [, , totalBorrowAssets, totalBorrowShares] = marketResult as unknown as [bigint, bigint, bigint, bigint, bigint, bigint];
+
+    // Convert repay amount to shares: shares = amount * totalShares / totalAssets (round up for user)
+    let repayShares = 0n;
+    if (totalBorrowAssets > 0n) {
+      repayShares = (amount * totalBorrowShares + totalBorrowAssets - 1n) / totalBorrowAssets;
+    }
+    // Cap to user's actual borrow shares (can't repay more than you owe)
+    if (repayShares > userBorrowShares) {
+      repayShares = userBorrowShares;
+    }
+
+    // Approve a bit more USDC than needed (shares → assets rounding may need extra)
+    const approveAmount = amount + 1000n; // 0.001 USDC buffer
+
+    executions = [
+      {
+        target: TOKENS.USDC,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: ERC20_ABI, functionName: 'approve', args: [POOLS.MORPHO_BLUE, approveAmount],
+        }),
+      },
+      {
+        target: POOLS.MORPHO_BLUE,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: MORPHO_BLUE_ABI, functionName: 'repay',
+          args: [MORPHO_MARKET, 0n, repayShares, safeAddr, '0x'],
+        }),
+      },
+    ];
+  }
 
   // Execute on-chain FIRST — only write to Supabase after confirmed success
   const result = await executeGuardedBatch(userAddress, user.address, user.safe_address, executions);
@@ -322,20 +430,41 @@ export async function withdraw(userAddress: string, tokenAddress: string, amount
   const token = tokenAddress.toLowerCase() as Address;
   const position = await ensurePositionExists(userAddress, user.safe_address);
 
-  if (position.current_protocol !== 'aave_v3') {
-    throw new Error('Morpho withdraw not yet implemented');
-  }
+  let executions: Execution[];
 
-  const executions: Execution[] = [
-    {
-      target: POOLS.AAVE_V3,
-      value: 0n,
-      callData: encodeFunctionData({
-        abi: AAVE_POOL_ABI, functionName: 'withdraw',
-        args: [token, amount, user.address as Address], // withdraw directly to EOA
-      }),
-    },
-  ];
+  if (position.current_protocol === 'aave_v3') {
+    executions = [
+      {
+        target: POOLS.AAVE_V3,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: AAVE_POOL_ABI, functionName: 'withdraw',
+          args: [token, amount, user.address as Address], // withdraw directly to EOA
+        }),
+      },
+    ];
+  } else {
+    // Morpho: withdraw collateral, then transfer to EOA
+    const safeAddr = user.safe_address as Address;
+    executions = [
+      {
+        target: POOLS.MORPHO_BLUE,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: MORPHO_BLUE_ABI, functionName: 'withdrawCollateral',
+          args: [MORPHO_MARKET, amount, safeAddr, safeAddr], // withdraw to Safe first
+        }),
+      },
+      {
+        target: token,
+        value: 0n,
+        callData: encodeFunctionData({
+          abi: ERC20_ABI, functionName: 'transfer',
+          args: [user.address as Address, amount], // then transfer to EOA
+        }),
+      },
+    ];
+  }
 
   // Execute on-chain FIRST — only write to Supabase after confirmed success
   const result = await executeGuardedBatch(userAddress, user.address, user.safe_address, executions);
@@ -375,22 +504,24 @@ export async function getPositionInfo(userAddress: string) {
     }
   } catch { /* default to aave_v3 */ }
 
-  // Read idle WETH sitting in Safe (not yet supplied to any protocol)
+  // Read idle token balances sitting in Safe (not yet supplied/used)
   let idleWeth = 0n;
+  let idleUsdc = 0n;
   try {
-    idleWeth = await publicClient.readContract({
-      address: TOKENS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr],
-    }) as bigint;
+    [idleWeth, idleUsdc] = await Promise.all([
+      publicClient.readContract({ address: TOKENS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }) as Promise<bigint>,
+      publicClient.readContract({ address: TOKENS.USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [safeAddr] }) as Promise<bigint>,
+    ]);
   } catch { /* ignore */ }
 
   if (currentProtocol === 'morpho_blue') {
-    return getMorphoPositionInfo(publicClient, safeAddr, idleWeth);
+    return getMorphoPositionInfo(publicClient, safeAddr, idleWeth, idleUsdc);
   }
-  return getAavePositionInfo(publicClient, safeAddr, idleWeth);
+  return getAavePositionInfo(publicClient, safeAddr, idleWeth, idleUsdc);
 }
 
 /** Read position data from Aave V3 */
-async function getAavePositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint) {
+async function getAavePositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint, idleUsdc: bigint) {
   const [totalCollateralBase, totalDebtBase, availableBorrowsBase, currentLiquidationThreshold, ltv, healthFactor] =
     await publicClient.readContract({
       address: POOLS.AAVE_V3,
@@ -492,6 +623,7 @@ async function getAavePositionInfo(publicClient: any, safeAddr: Address, idleWet
         borrowed: borrowed.toString(),
         borrowable: borrowableUsdc.toString(),
         repayable: borrowed.toString(),
+        idle: idleUsdc.toString(),
         decimals: 6,
         priceUsd: 1.0,
       },
@@ -500,7 +632,7 @@ async function getAavePositionInfo(publicClient: any, safeAddr: Address, idleWet
 }
 
 /** Read position data from Morpho Blue */
-async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint) {
+async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleWeth: bigint, idleUsdc: bigint) {
   const marketId = getMorphoMarketId();
 
   // Read Morpho position and market state in parallel
@@ -519,8 +651,8 @@ async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleW
     }),
   ]);
 
-  const [supplyShares, borrowShares, collateral] = positionResult as [bigint, bigint, bigint];
-  const [totalSupplyAssets, totalSupplyShares, totalBorrowAssets, totalBorrowShares] =
+  const [, borrowShares, collateral] = positionResult as [bigint, bigint, bigint];
+  const [, , totalBorrowAssets, totalBorrowShares] =
     marketResult as [bigint, bigint, bigint, bigint];
 
   const deposited = collateral; // WETH in raw wei
@@ -534,30 +666,10 @@ async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleW
 
   const hasPosition = deposited > 0n || borrowed > 0n;
 
-  // Derive WETH price from Aave oracle (still available even if position is on Morpho)
+  // Read WETH price from Morpho oracle
   let wethPriceUsd = 0;
   let collateralUsd = 0;
   let debtUsd = 0;
-  try {
-    const [totalCollateralBase] = await publicClient.readContract({
-      address: POOLS.AAVE_V3,
-      abi: AAVE_POOL_ABI,
-      functionName: 'getUserAccountData',
-      args: [safeAddr],
-    });
-    // If Aave still has some dust, use that. Otherwise read WETH price from Aave reserve.
-    // Simpler: use Aave's price feed via a small test
-    const aaveWethReserve = await publicClient.readContract({
-      address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI,
-      functionName: 'getReserveData', args: [TOKENS.WETH],
-    });
-    // Aave doesn't expose price directly, but we can estimate from market data
-    // For now, use a simpler approach: collateral value from Morpho's perspective
-  } catch { /* ignore */ }
-
-  // Compute USD values using a simple price derivation
-  // Morpho LLTV = 0.86, if we know borrowed USDC ($1 each), we can derive collateral value
-  // But cleaner: read WETH price from the Morpho oracle
   try {
     // Morpho oracle returns price in 36 decimals (USDC/WETH)
     // price = oracle.price() where 1 WETH = price / 1e36 USDC (adjusted for token decimals)
@@ -646,6 +758,7 @@ async function getMorphoPositionInfo(publicClient: any, safeAddr: Address, idleW
         borrowed: borrowed.toString(),
         borrowable: borrowableUsdc.toString(),
         repayable: borrowed.toString(),
+        idle: idleUsdc.toString(),
         decimals: 6,
         priceUsd: 1.0,
       },
