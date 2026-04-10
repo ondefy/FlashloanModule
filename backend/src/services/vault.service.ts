@@ -861,10 +861,87 @@ export async function simulateAction(
 
 // ─── Protocol Rates ─────────────────────────────────────────────────────────
 
-export async function getProtocolRates() {
+/** Morpho Blue GraphQL endpoint */
+const MORPHO_API_URL = 'https://blue-api.morpho.org/graphql';
+
+/** Our specific WETH/USDC market on Base */
+const MORPHO_MARKET_ID = '0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda';
+
+const MORPHO_MARKET_QUERY = `query MarketRates($marketId: String!, $chainId: Int!) {
+  marketByUniqueKey(uniqueKey: $marketId, chainId: $chainId) {
+    loanAsset { symbol priceUsd }
+    collateralAsset { symbol priceUsd }
+    lltv
+    state {
+      borrowApy
+      supplyApy
+      fee
+      utilization
+      borrowAssetsUsd
+      supplyAssetsUsd
+      collateralAssetsUsd
+      rewards {
+        asset { symbol }
+        supplyApr
+        borrowApr
+      }
+    }
+  }
+}`;
+
+interface ProtocolRates {
+  /** WETH collateral supply APY (decimal, e.g., 0.0171 = 1.71%) */
+  collateralSupplyApy: number;
+  /** USDC borrow APY (decimal, e.g., 0.0392 = 3.92%) */
+  borrowApy: number;
+  /** USDC lender supply APY — informational, not used in rebalance calc */
+  lenderSupplyApy: number;
+  /** Utilization rate (decimal, e.g., 0.90 = 90%) */
+  utilization: number | null;
+}
+
+interface RatesResponse {
+  aave: ProtocolRates;
+  morpho: ProtocolRates;
+  /** ETH/USD price used for USD-normalized calculations */
+  ethPriceUsd: number;
+  /** Market metadata */
+  market: {
+    collateralToken: string;
+    debtToken: string;
+    morphoLltv: number;
+  };
+  /** Pre-calculated example for a given position (if position data provided) */
+  rebalancePreview: {
+    aaveNetCostUsd: number;
+    morphoNetCostUsd: number;
+    annualSavingsUsd: number;
+    cheaperProtocol: 'aave_v3' | 'morpho_blue' | 'equal';
+    explanation: string;
+  } | null;
+  fetchedAt: string;
+}
+
+/**
+ * Fetch current APY/APR rates from both Aave V3 and Morpho Blue.
+ *
+ * Key distinction:
+ *   - collateralSupplyApy = what WETH collateral earns (Aave: >0, Morpho: 0)
+ *   - borrowApy = what USDC debt costs
+ *   - lenderSupplyApy = what USDC lenders earn (informational only)
+ *
+ * Morpho Blue collateral does NOT earn supply APY — it sits idle as security.
+ * Only USDC lenders earn supplyApy on Morpho. This is a critical difference from Aave
+ * where aTokens (collateral) accrue interest.
+ */
+export async function getProtocolRates(
+  collateralUsd?: number,
+  debtUsd?: number,
+): Promise<RatesResponse> {
   const publicClient = getPublicClient();
 
-  const [wethReserve, usdcReserve] = await Promise.all([
+  // Fetch Aave rates (on-chain) and Morpho rates (API) in parallel
+  const [aaveWethReserve, aaveUsdcReserve, morphoData] = await Promise.all([
     publicClient.readContract({
       address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI,
       functionName: 'getReserveData', args: [TOKENS.WETH],
@@ -873,20 +950,104 @@ export async function getProtocolRates() {
       address: POOLS.AAVE_V3, abi: AAVE_POOL_ABI,
       functionName: 'getReserveData', args: [TOKENS.USDC],
     }),
+    fetchMorphoMarketRates(),
   ]);
 
-  // Aave rates are in RAY (1e27). Convert to decimal APY.
-  const aaveSupplyApy = Number((wethReserve as any).currentLiquidityRate) / 1e27;
-  const aaveBorrowApy = Number((usdcReserve as any).currentVariableBorrowRate) / 1e27;
+  // Aave rates are in RAY (1e27). Convert to decimal.
+  const aaveWethSupplyApy = Number((aaveWethReserve as any).currentLiquidityRate) / 1e27;
+  const aaveUsdcBorrowApy = Number((aaveUsdcReserve as any).currentVariableBorrowRate) / 1e27;
+  const aaveUsdcSupplyApy = Number((aaveUsdcReserve as any).currentLiquidityRate) / 1e27;
+
+  const aave: ProtocolRates = {
+    collateralSupplyApy: round4(aaveWethSupplyApy),
+    borrowApy: round4(aaveUsdcBorrowApy),
+    lenderSupplyApy: round4(aaveUsdcSupplyApy),
+    utilization: null, // Aave doesn't expose a single utilization number easily
+  };
+
+  const morpho: ProtocolRates = {
+    // Morpho Blue: collateral earns NOTHING. It's locked idle.
+    collateralSupplyApy: 0,
+    borrowApy: round4(morphoData.borrowApy),
+    lenderSupplyApy: round4(morphoData.supplyApy),
+    utilization: round4(morphoData.utilization),
+  };
+
+  const ethPriceUsd = morphoData.ethPriceUsd;
+
+  // Pre-calculate rebalance preview if position data is provided
+  let rebalancePreview: RatesResponse['rebalancePreview'] = null;
+  if (collateralUsd != null && debtUsd != null && debtUsd > 0) {
+    const aaveNetCost = (debtUsd * aave.borrowApy) - (collateralUsd * aave.collateralSupplyApy);
+    const morphoNetCost = (debtUsd * morpho.borrowApy) - (collateralUsd * morpho.collateralSupplyApy);
+    const savings = aaveNetCost - morphoNetCost; // positive = Morpho is cheaper
+
+    let cheaperProtocol: 'aave_v3' | 'morpho_blue' | 'equal';
+    if (Math.abs(savings) < 1) cheaperProtocol = 'equal';
+    else cheaperProtocol = savings > 0 ? 'morpho_blue' : 'aave_v3';
+
+    const collateralFmt = `$${collateralUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    const debtFmt = `$${debtUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+
+    rebalancePreview = {
+      aaveNetCostUsd: round2(aaveNetCost),
+      morphoNetCostUsd: round2(morphoNetCost),
+      annualSavingsUsd: round2(Math.abs(savings)),
+      cheaperProtocol,
+      explanation: cheaperProtocol === 'equal'
+        ? `For ${collateralFmt} collateral / ${debtFmt} debt: both protocols cost roughly the same.`
+        : `For ${collateralFmt} collateral / ${debtFmt} debt: ${cheaperProtocol === 'aave_v3' ? 'Aave' : 'Morpho'} saves ~$${Math.abs(savings).toFixed(2)}/year.`
+        + (cheaperProtocol === 'aave_v3'
+          ? ` Aave's WETH supply earnings (${(aave.collateralSupplyApy * 100).toFixed(2)}%) offset its higher borrow rate.`
+          : ` Morpho's lower borrow rate (${(morpho.borrowApy * 100).toFixed(2)}% vs ${(aave.borrowApy * 100).toFixed(2)}%) outweighs Aave's supply earnings.`),
+    };
+  }
 
   return {
-    aave: {
-      supplyApy: Math.round(aaveSupplyApy * 10000) / 10000, // 4 decimal places
-      borrowApy: Math.round(aaveBorrowApy * 10000) / 10000,
+    aave,
+    morpho,
+    ethPriceUsd: round2(ethPriceUsd),
+    market: {
+      collateralToken: 'WETH',
+      debtToken: 'USDC',
+      morphoLltv: 0.86,
     },
-    morpho: {
-      supplyApy: null, // TODO: Fetch Morpho rates
-      borrowApy: null,
-    },
+    rebalancePreview,
+    fetchedAt: new Date().toISOString(),
   };
 }
+
+/** Fetch Morpho Blue market rates from their GraphQL API */
+async function fetchMorphoMarketRates(): Promise<{
+  borrowApy: number;
+  supplyApy: number;
+  utilization: number;
+  ethPriceUsd: number;
+}> {
+  try {
+    const res = await fetch(MORPHO_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: MORPHO_MARKET_QUERY,
+        variables: { marketId: MORPHO_MARKET_ID, chainId: 8453 },
+      }),
+    });
+    const json = await res.json() as any;
+    const market = json?.data?.marketByUniqueKey;
+    if (!market?.state) throw new Error('No market state returned');
+
+    return {
+      borrowApy: market.state.borrowApy ?? 0,
+      supplyApy: market.state.supplyApy ?? 0,
+      utilization: market.state.utilization ?? 0,
+      ethPriceUsd: market.collateralAsset?.priceUsd ?? 0,
+    };
+  } catch (err: any) {
+    logger.error({ err: err.message }, 'Failed to fetch Morpho market rates');
+    return { borrowApy: 0, supplyApy: 0, utilization: 0, ethPriceUsd: 0 };
+  }
+}
+
+function round4(n: number): number { return Math.round(n * 10000) / 10000; }
+function round2(n: number): number { return Math.round(n * 100) / 100; }

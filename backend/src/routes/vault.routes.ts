@@ -5,6 +5,23 @@ import { deposit, borrow, repay, withdraw, getPositionInfo, simulateAction, getP
 import { forceMigrate, migrationPreflight } from '../services/monitor.service.js';
 
 const router = Router();
+
+/** GET /vault/rates — Current protocol APYs + optional rebalance preview (PUBLIC — no auth)
+ *  Query params (optional):
+ *    ?collateralUsd=25000&debtUsd=10000  — adds rebalancePreview to response
+ */
+router.get('/rates', async (req: Request, res: Response) => {
+  try {
+    const collateralUsd = req.query.collateralUsd ? Number(req.query.collateralUsd) : undefined;
+    const debtUsd = req.query.debtUsd ? Number(req.query.debtUsd) : undefined;
+    const rates = await getProtocolRates(collateralUsd, debtUsd);
+    res.json(rates);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// All routes below require authentication
 router.use(authMiddleware);
 
 const depositSchema = z.object({
@@ -120,16 +137,6 @@ router.post('/migrate', async (req: Request, res: Response) => {
     const { toProtocol } = migrateSchema.parse(req.body);
     const result = await forceMigrate(req.user!.address, toProtocol);
     res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/** GET /vault/rates — Current protocol APYs */
-router.get('/rates', async (_req: Request, res: Response) => {
-  try {
-    const rates = await getProtocolRates();
-    res.json(rates);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
