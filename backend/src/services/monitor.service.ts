@@ -12,26 +12,101 @@ import {
 import { base } from 'viem/chains';
 import pino from 'pino';
 import { getEnv } from '../config/env.js';
-import { TOKENS, POOLS, MORPHO_MARKET } from '../config/addresses.js';
+import { TOKENS, POOLS, MORPHO_MARKET, LIQUIDATION_THRESHOLDS, AAVE_EMODE_CATEGORY } from '../config/addresses.js';
 import { AAVE_POOL_ABI, ERC20_ABI, MORPHO_BLUE_ABI, UNIFIED_MODULE_ABI } from '../utils/abis.js';
 import {
   getPositionsDueForCheck,
   updatePositionHealth,
   insertTransactionLog,
-  updateTransactionLog,
   getSupabase,
 } from '../db/supabase.js';
 import { executeGuardedBatch, type Execution } from './session-executor.service.js';
-import { supplyWethToAave } from './vault.service.js';
+import { supplyWethToAave, getProtocolRates } from './vault.service.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
-const AAVE_BASE_DECIMALS = 8;
 const USDC_DECIMALS = 6;
 const VARIABLE_RATE = 2n;
 const REPAY_BUFFER_MAX_USDC = 1_000_000n; // 1 USDC max buffer
 const REPAY_BUFFER_BPS = 50n; // 0.5% buffer for interest accrual
 const REPAY_BUFFER_MIN = 100n; // 0.0001 USDC minimum buffer
+
+// ─── Rebalance Config ───────────────────────────────────────────────────────
+
+// Cost-based rebalance config
+const REBALANCE_MIN_SAVINGS_USD = 10; // Minimum $10/year savings to migrate
+const REBALANCE_MIN_SAVINGS_PCT = 0.01; // OR 1% of debt value
+const REBALANCE_MIN_HF = 1.5; // Don't migrate below this health factor (cost migration)
+const REBALANCE_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours between migrations
+const REBALANCE_MIN_DEBT_USD = 100; // Skip positions with < $100 debt
+const REBALANCE_TWAP_MIN_SAMPLES = 10; // Need at least 10 samples (~10 min) before deciding
+const ETH_PRICE_VOLATILITY_PCT = 0.03; // Skip if ETH moved >3% in 1 hour
+
+// Safety-based migration config
+const SAFETY_HF_TRIGGER = 1.3; // Trigger safety check when HF drops below this
+const SAFETY_HF_FLOOR = 1.05; // Don't touch if already being liquidated
+const SAFETY_HF_MIN_IMPROVEMENT = 0.05; // Target protocol must give at least 0.05 HF improvement
+const SAFETY_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1 hour cooldown for safety migrations (faster than cost)
+
+// ─── Rate TWAP Ring Buffer ──────────────────────────────────────────────────
+// Store rate samples every cycle. Use 1-hour average for migration decisions.
+
+interface RateSample {
+  timestamp: number;
+  aaveCollateralApy: number;
+  aaveBorrowApy: number;
+  morphoCollateralApy: number;
+  morphoBorrowApy: number;
+  ethPriceUsd: number;
+}
+
+const TWAP_MAX_SAMPLES = 60; // 60 samples = 1 hour at 60s intervals
+const rateSamples: RateSample[] = [];
+
+/** Add a new rate sample to the ring buffer */
+function pushRateSample(sample: RateSample): void {
+  rateSamples.push(sample);
+  if (rateSamples.length > TWAP_MAX_SAMPLES) {
+    rateSamples.shift();
+  }
+}
+
+/** Get the TWAP (average) of all stored samples */
+function getTwapRates(): RateSample | null {
+  if (rateSamples.length < REBALANCE_TWAP_MIN_SAMPLES) return null;
+
+  const sum = rateSamples.reduce(
+    (acc, s) => ({
+      timestamp: Date.now(),
+      aaveCollateralApy: acc.aaveCollateralApy + s.aaveCollateralApy,
+      aaveBorrowApy: acc.aaveBorrowApy + s.aaveBorrowApy,
+      morphoCollateralApy: acc.morphoCollateralApy + s.morphoCollateralApy,
+      morphoBorrowApy: acc.morphoBorrowApy + s.morphoBorrowApy,
+      ethPriceUsd: acc.ethPriceUsd + s.ethPriceUsd,
+    }),
+    { timestamp: 0, aaveCollateralApy: 0, aaveBorrowApy: 0, morphoCollateralApy: 0, morphoBorrowApy: 0, ethPriceUsd: 0 },
+  );
+
+  const n = rateSamples.length;
+  return {
+    timestamp: Date.now(),
+    aaveCollateralApy: sum.aaveCollateralApy / n,
+    aaveBorrowApy: sum.aaveBorrowApy / n,
+    morphoCollateralApy: sum.morphoCollateralApy / n,
+    morphoBorrowApy: sum.morphoBorrowApy / n,
+    ethPriceUsd: sum.ethPriceUsd / n,
+  };
+}
+
+/** Check if ETH price has moved more than threshold in the last hour */
+function isEthPriceVolatile(): boolean {
+  if (rateSamples.length < 2) return false;
+  const oldest = rateSamples[0];
+  const newest = rateSamples[rateSamples.length - 1];
+  if (oldest.ethPriceUsd === 0) return false;
+  const pctChange = Math.abs(newest.ethPriceUsd - oldest.ethPriceUsd) / oldest.ethPriceUsd;
+  return pctChange > ETH_PRICE_VOLATILITY_PCT;
+}
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -77,7 +152,12 @@ async function runMonitorCycle(): Promise<void> {
     logger.error({ err: err.message }, 'Idle WETH check failed')
   );
 
-  // 2. Health check existing positions
+  // 2. Sample current rates for TWAP
+  await sampleRates().catch(err =>
+    logger.error({ err: err.message }, 'Rate sampling failed')
+  );
+
+  // 3. Health check existing positions
   const positions = await getPositionsDueForCheck(500);
   if (!positions || positions.length === 0) {
     logger.info('No positions due for check');
@@ -98,6 +178,26 @@ async function runMonitorCycle(): Promise<void> {
       logger.error({ positionId: pos.id, err: err.message }, 'Failed to check position');
     }
   }
+}
+
+// ─── Rate Sampling ──────────────────────────────────────────────────────────
+
+async function sampleRates(): Promise<void> {
+  const rates = await getProtocolRates();
+  pushRateSample({
+    timestamp: Date.now(),
+    aaveCollateralApy: rates.aave.collateralSupplyApy,
+    aaveBorrowApy: rates.aave.borrowApy,
+    morphoCollateralApy: rates.morpho.collateralSupplyApy,
+    morphoBorrowApy: rates.morpho.borrowApy,
+    ethPriceUsd: rates.ethPriceUsd,
+  });
+  logger.debug({
+    samples: rateSamples.length,
+    aaveBorrow: rates.aave.borrowApy,
+    morphoBorrow: rates.morpho.borrowApy,
+    ethPrice: rates.ethPriceUsd,
+  }, 'Rate sample recorded');
 }
 
 // ─── Idle WETH Auto-Supply ──────────────────────────────────────────────────
@@ -201,12 +301,49 @@ async function checkAndUpdatePosition(publicClient: any, pos: any): Promise<void
     } catch { /* use USD-denominated fallback */ }
 
   } else {
-    // Morpho Blue position
-    // TODO: Read Morpho position data
-    // For now, set reasonable defaults
-    healthFactor = 2.0;
-    collateralAmount = BigInt(pos.collateral_amount || '0');
-    debtAmount = BigInt(pos.debt_amount || '0');
+    // Morpho Blue position — read on-chain
+    const marketId = getMorphoMarketId();
+    try {
+      const [posResult, marketResult] = await Promise.all([
+        publicClient.readContract({
+          address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'position',
+          args: [marketId, pos.safe_address as Address],
+        }),
+        publicClient.readContract({
+          address: POOLS.MORPHO_BLUE, abi: MORPHO_BLUE_ABI, functionName: 'market',
+          args: [marketId],
+        }),
+      ]);
+      const [, borrowShares, collateral] = posResult as unknown as [bigint, bigint, bigint];
+      const [, , totalBorrowAssets, totalBorrowShares] = marketResult as unknown as [bigint, bigint, bigint, bigint, bigint, bigint];
+
+      collateralAmount = collateral;
+
+      // Convert borrow shares to assets (round up)
+      if (totalBorrowShares > 0n && borrowShares > 0n) {
+        debtAmount = (borrowShares * totalBorrowAssets + totalBorrowShares - 1n) / totalBorrowShares;
+      } else {
+        debtAmount = 0n;
+      }
+
+      // Calculate Morpho HF: (collateralUsd * LLTV) / debtUsd
+      // Use ETH price from latest rate sample
+      const latestSample = rateSamples.length > 0 ? rateSamples[rateSamples.length - 1] : null;
+      const ethPrice = latestSample?.ethPriceUsd ?? 0;
+      if (ethPrice > 0 && debtAmount > 0n) {
+        const collateralWeth = Number(formatUnits(collateralAmount, 18));
+        const debtUsdc = Number(formatUnits(debtAmount, USDC_DECIMALS));
+        const collateralUsd = collateralWeth * ethPrice;
+        healthFactor = (collateralUsd * LIQUIDATION_THRESHOLDS.MORPHO) / debtUsdc;
+      } else {
+        healthFactor = debtAmount === 0n ? 999 : 2.0;
+      }
+    } catch (err: any) {
+      logger.error({ positionId: pos.id, err: err.message }, 'Failed to read Morpho position');
+      healthFactor = 2.0;
+      collateralAmount = BigInt(pos.collateral_amount || '0');
+      debtAmount = BigInt(pos.debt_amount || '0');
+    }
   }
 
   // Update position in DB (also sets next_check_at via tiered function)
@@ -217,38 +354,288 @@ async function checkAndUpdatePosition(publicClient: any, pos: any): Promise<void
     debtAmount.toString(),
   );
 
-  // Check if migration is beneficial
+  // Safety check first (higher priority than cost optimization)
+  await checkSafetyMigration(publicClient, pos, healthFactor);
+
+  // Then check if cost-based migration is beneficial
   await checkMigrationOpportunity(publicClient, pos, healthFactor);
 }
 
-// ─── Migration Decision Engine ───────────────────────────────────────────────
+// ─── Safety Migration (Liquidation Protection) ─────────────────────────────
 
-async function checkMigrationOpportunity(
+/**
+ * If HF is dangerously low, try to protect the position:
+ *   1. Enable Aave e-mode (cheapest — no flashloan, just raises liquidation threshold)
+ *   2. Migrate to protocol with higher liquidation threshold
+ */
+async function checkSafetyMigration(
   publicClient: any,
   pos: any,
   healthFactor: number,
 ): Promise<void> {
-  // Don't migrate if health factor is too low (risky)
-  if (healthFactor < 1.5) {
-    logger.warn({ positionId: pos.id, healthFactor }, 'HF too low to migrate');
-    return;
-  }
-
-  // Don't migrate if position has no debt (nothing to swap)
+  // Only trigger when HF is in the danger zone (1.05 - 1.3)
+  if (healthFactor >= SAFETY_HF_TRIGGER || healthFactor <= SAFETY_HF_FLOOR) return;
   if (BigInt(pos.debt_amount || '0') === 0n) return;
 
-  // TODO: Fetch and compare actual rates from both protocols
-  // For now, log that migration check was performed
+  const positionId = pos.id;
+  const safeAddr = pos.safe_address as Address;
+
+  logger.warn({ positionId, healthFactor, protocol: pos.current_protocol }, 'Safety check: HF in danger zone');
+
+  // Cooldown check (1 hour for safety)
+  const supabase = getSupabase();
+  const { data: lastMigration } = await supabase
+    .from('migration_history')
+    .select('created_at')
+    .eq('position_id', positionId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (lastMigration) {
+    const elapsed = Date.now() - new Date(lastMigration.created_at).getTime();
+    if (elapsed < SAFETY_COOLDOWN_MS) {
+      logger.debug({ positionId }, 'Safety skip: cooldown active');
+      return;
+    }
+  }
+
+  // Step 1: If on Aave, try enabling e-mode first (cheapest intervention)
+  if (pos.current_protocol === 'aave_v3') {
+    try {
+      const currentEMode = await publicClient.readContract({
+        address: POOLS.AAVE_V3,
+        abi: AAVE_POOL_ABI,
+        functionName: 'getUserEMode',
+        args: [safeAddr],
+      }) as bigint;
+
+      if (Number(currentEMode) === 0) {
+        // User is NOT in e-mode. Enabling it would raise liquidation threshold from 83% to 93%.
+        // Project new HF: (collateralUsd * 0.93) / debtUsd
+        const latestSample = rateSamples.length > 0 ? rateSamples[rateSamples.length - 1] : null;
+        const ethPrice = latestSample?.ethPriceUsd ?? 0;
+        if (ethPrice > 0) {
+          const collateralWeth = Number(formatUnits(BigInt(pos.collateral_amount || '0'), 18));
+          const debtUsdc = Number(formatUnits(BigInt(pos.debt_amount || '0'), USDC_DECIMALS));
+          const collateralUsd = collateralWeth * ethPrice;
+          const projectedHF = (collateralUsd * LIQUIDATION_THRESHOLDS.AAVE_EMODE) / debtUsdc;
+
+          if (projectedHF > healthFactor + SAFETY_HF_MIN_IMPROVEMENT) {
+            logger.info({
+              positionId,
+              currentHF: healthFactor,
+              projectedHF: Math.round(projectedHF * 100) / 100,
+            }, 'Safety: enabling Aave e-mode to raise HF');
+
+            try {
+              const emodeCalldata = encodeFunctionData({
+                abi: AAVE_POOL_ABI,
+                functionName: 'setUserEMode',
+                args: [AAVE_EMODE_CATEGORY],
+              });
+
+              const execution: Execution = {
+                target: POOLS.AAVE_V3,
+                value: 0n,
+                callData: emodeCalldata as Hex,
+              };
+
+              await executeGuardedBatch(pos.user_address, pos.user_address, pos.safe_address, [execution]);
+              logger.info({ positionId, projectedHF }, 'Safety: e-mode enabled successfully');
+              return; // e-mode enabled, no need to migrate
+            } catch (err: any) {
+              logger.error({ positionId, err: err.message }, 'Safety: failed to enable e-mode');
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.error({ positionId, err: err.message }, 'Safety: failed to check e-mode status');
+    }
+  }
+
+  // Step 2: Check if migrating to target protocol gives better HF
+  const latestSample = rateSamples.length > 0 ? rateSamples[rateSamples.length - 1] : null;
+  const ethPrice = latestSample?.ethPriceUsd ?? 0;
+  if (ethPrice <= 0) return;
+
+  const collateralWeth = Number(formatUnits(BigInt(pos.collateral_amount || '0'), 18));
+  const debtUsdc = Number(formatUnits(BigInt(pos.debt_amount || '0'), USDC_DECIMALS));
+  const collateralUsd = collateralWeth * ethPrice;
+  if (debtUsdc <= 0) return;
+
+  const currentThreshold = pos.current_protocol === 'aave_v3'
+    ? LIQUIDATION_THRESHOLDS.AAVE_NORMAL
+    : LIQUIDATION_THRESHOLDS.MORPHO;
+  const targetThreshold = pos.current_protocol === 'aave_v3'
+    ? LIQUIDATION_THRESHOLDS.MORPHO
+    : LIQUIDATION_THRESHOLDS.AAVE_NORMAL;
+  const targetProtocol = pos.current_protocol === 'aave_v3' ? 'morpho_blue' : 'aave_v3';
+
+  const currentHF = (collateralUsd * currentThreshold) / debtUsdc;
+  const targetHF = (collateralUsd * targetThreshold) / debtUsdc;
+
+  if (targetHF > currentHF + SAFETY_HF_MIN_IMPROVEMENT) {
+    logger.info({
+      positionId,
+      currentHF: Math.round(currentHF * 100) / 100,
+      targetHF: Math.round(targetHF * 100) / 100,
+      targetProtocol,
+      currentThreshold,
+      targetThreshold,
+    }, 'Safety migration: target protocol has higher liquidation threshold');
+
+    try {
+      await forceMigrate(pos.user_address, targetProtocol as 'aave_v3' | 'morpho_blue');
+      logger.info({ positionId, targetProtocol }, 'Safety migration completed');
+    } catch (err: any) {
+      logger.error({ positionId, err: err.message }, 'Safety migration failed');
+    }
+  } else {
+    logger.warn({ positionId, currentHF, targetHF }, 'Safety: no protocol offers better HF, position at risk');
+  }
+}
+
+// ─── Cost-Based Migration Decision Engine ───────────────────────────────────
+
+/**
+ * Decide whether to migrate a position based on USD-normalized net cost comparison.
+ *
+ * Formula:
+ *   net_cost = (debt_usd × borrow_apy) − (collateral_usd × collateral_supply_apy)
+ *   savings  = current_net_cost − target_net_cost
+ *
+ * Gates (all must pass):
+ *   1. Health factor > 1.5
+ *   2. Debt > $100
+ *   3. Cooldown > 6 hours since last migration
+ *   4. Enough TWAP samples (10+ minutes of data)
+ *   5. ETH price stable (<3% change in last hour)
+ *   6. Savings > max($10, 1% of debt)
+ */
+async function checkMigrationOpportunity(
+  _pc: any, // publicClient passed from caller, unused — rates come from TWAP
+  pos: any,
+  healthFactor: number,
+): Promise<void> {
+  const positionId = pos.id;
   const currentProtocol = pos.current_protocol;
   const targetProtocol = currentProtocol === 'aave_v3' ? 'morpho_blue' : 'aave_v3';
 
-  // Placeholder: rate comparison logic
-  // const currentRate = await fetchRate(currentProtocol, pos.collateral_token);
-  // const targetRate = await fetchRate(targetProtocol, pos.collateral_token);
-  // const rateDiffBps = (targetRate - currentRate) * 10000;
-  // if (rateDiffBps > MIN_RATE_DIFF) { triggerMigration(...) }
+  // Gate 1: Health factor
+  if (healthFactor < REBALANCE_MIN_HF) {
+    logger.debug({ positionId, healthFactor }, 'Rebalance skip: HF too low');
+    return;
+  }
 
-  logger.debug({ positionId: pos.id, currentProtocol, targetProtocol }, 'Migration check completed');
+  // Gate 2: Must have debt
+  const debtRaw = BigInt(pos.debt_amount || '0');
+  if (debtRaw === 0n) return;
+
+  // Gate 3: Need enough TWAP samples
+  const twap = getTwapRates();
+  if (!twap) {
+    logger.debug({ positionId, samples: rateSamples.length }, 'Rebalance skip: not enough rate samples yet');
+    return;
+  }
+
+  // Gate 4: ETH price stability
+  if (isEthPriceVolatile()) {
+    logger.info({ positionId }, 'Rebalance skip: ETH price too volatile');
+    return;
+  }
+
+  // Calculate USD values
+  const ethPrice = twap.ethPriceUsd;
+  if (ethPrice <= 0) return;
+
+  // collateral_amount is in wei (18 decimals) for WETH, debt_amount is in 6 decimals for USDC
+  const collateralWeth = Number(formatUnits(BigInt(pos.collateral_amount || '0'), 18));
+  const debtUsdc = Number(formatUnits(debtRaw, USDC_DECIMALS));
+
+  const collateralUsd = collateralWeth * ethPrice;
+  const debtUsd = debtUsdc;
+
+  // Gate 5: Minimum debt size
+  if (debtUsd < REBALANCE_MIN_DEBT_USD) {
+    logger.debug({ positionId, debtUsd }, 'Rebalance skip: debt too small');
+    return;
+  }
+
+  // Gate 6: Cooldown — check last migration time
+  const supabase = getSupabase();
+  const { data: lastMigration } = await supabase
+    .from('migration_history')
+    .select('created_at')
+    .eq('position_id', positionId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (lastMigration) {
+    const lastMigratedAt = new Date(lastMigration.created_at).getTime();
+    const elapsed = Date.now() - lastMigratedAt;
+    if (elapsed < REBALANCE_COOLDOWN_MS) {
+      const hoursLeft = ((REBALANCE_COOLDOWN_MS - elapsed) / 3600000).toFixed(1);
+      logger.debug({ positionId, hoursLeft }, 'Rebalance skip: cooldown active');
+      return;
+    }
+  }
+
+  // Calculate net annual cost for each protocol using TWAP rates
+  const aaveNetCost = (debtUsd * twap.aaveBorrowApy) - (collateralUsd * twap.aaveCollateralApy);
+  const morphoNetCost = (debtUsd * twap.morphoBorrowApy) - (collateralUsd * twap.morphoCollateralApy);
+
+  const currentCost = currentProtocol === 'aave_v3' ? aaveNetCost : morphoNetCost;
+  const targetCost = currentProtocol === 'aave_v3' ? morphoNetCost : aaveNetCost;
+  const annualSavings = currentCost - targetCost;
+
+  // Gate 7: Savings threshold
+  const minSavings = Math.max(REBALANCE_MIN_SAVINGS_USD, debtUsd * REBALANCE_MIN_SAVINGS_PCT);
+  if (annualSavings <= minSavings) {
+    logger.debug({
+      positionId,
+      currentProtocol,
+      currentCost: Math.round(currentCost * 100) / 100,
+      targetCost: Math.round(targetCost * 100) / 100,
+      annualSavings: Math.round(annualSavings * 100) / 100,
+      minSavings: Math.round(minSavings * 100) / 100,
+    }, 'Rebalance skip: savings below threshold');
+    return;
+  }
+
+  // All gates passed — trigger migration
+  logger.info({
+    positionId,
+    userAddress: pos.user_address,
+    currentProtocol,
+    targetProtocol,
+    collateralUsd: Math.round(collateralUsd),
+    debtUsd: Math.round(debtUsd),
+    currentCostUsd: Math.round(currentCost * 100) / 100,
+    targetCostUsd: Math.round(targetCost * 100) / 100,
+    annualSavingsUsd: Math.round(annualSavings * 100) / 100,
+    twapSamples: rateSamples.length,
+    rates: {
+      aaveSupply: twap.aaveCollateralApy,
+      aaveBorrow: twap.aaveBorrowApy,
+      morphoSupply: twap.morphoCollateralApy,
+      morphoBorrow: twap.morphoBorrowApy,
+      ethPrice: twap.ethPriceUsd,
+    },
+  }, 'Rebalance triggered: migrating position');
+
+  try {
+    await forceMigrate(pos.user_address, targetProtocol as 'aave_v3' | 'morpho_blue');
+    logger.info({ positionId, targetProtocol, annualSavings }, 'Auto-rebalance completed successfully');
+  } catch (err: any) {
+    logger.error({
+      positionId,
+      targetProtocol,
+      err: err.message,
+    }, 'Auto-rebalance failed');
+  }
 }
 
 // ─── Flashloan Migration ─────────────────────────────────────────────────────

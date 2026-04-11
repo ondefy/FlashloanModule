@@ -126,6 +126,46 @@ export const AAVE_POOL_ABI = [
     ],
     stateMutability: 'view',
   },
+  {
+    type: 'function',
+    name: 'setUserEMode',
+    inputs: [{ name: 'categoryId', type: 'uint8' }],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'getUserEMode',
+    inputs: [{ name: 'user', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getEModeCategoryData',
+    inputs: [{ name: 'id', type: 'uint8' }],
+    outputs: [
+      {
+        type: 'tuple',
+        components: [
+          { name: 'ltv', type: 'uint16' },
+          { name: 'liquidationThreshold', type: 'uint16' },
+          { name: 'liquidationBonus', type: 'uint16' },
+          { name: 'collateralBitmap', type: 'uint128' },
+          { name: 'label', type: 'string' },
+          { name: 'borrowableBitmap', type: 'uint128' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'FLASHLOAN_PREMIUM_TOTAL',
+    inputs: [],
+    outputs: [{ type: 'uint128' }],
+    stateMutability: 'view',
+  },
 ] as const;
 
 export const MORPHO_BLUE_ABI = [

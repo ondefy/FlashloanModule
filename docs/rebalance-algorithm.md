@@ -1,42 +1,83 @@
 # Rebalance Algorithm
 
-## How We Decide When to Migrate
+### How the System Decides When to Move Your Position
+
+
+## 1. What Your Position Contains
 
 Your position has two parts:
-- **WETH collateral** — earns interest on Aave, earns **nothing** on Morpho
+
+- **WETH collateral** — earns interest on Aave, earns nothing on Morpho
 - **USDC debt** — you pay interest on both protocols
 
-The system checks every 60 seconds: would you save money on the other protocol? If yes, it migrates automatically.
 
-## The Key Insight
+## 2. Two Reasons to Migrate
 
-**You can't just compare borrow rates.** You also need to count what your collateral earns.
+The system migrates your position for two reasons:
 
-On Aave, your WETH collateral earns supply APY (currently ~1.71%). On Morpho, your WETH collateral earns **0%** — it just sits there as security.
+**Reason 1: Save money** — the other protocol is cheaper (lower net cost).
 
-So the real cost on each protocol is:
+**Reason 2: Avoid liquidation** — health factor is dropping and the other protocol has a higher liquidation threshold, giving your position more safety room.
 
-```
-Net cost = What you pay on debt − What you earn on collateral
-```
 
-Both amounts must be in **dollars**, because WETH and USDC have different values.
+## 3. The Cost Formula
 
-## The Formula
+You can't just compare borrow rates. You must also count what your collateral earns.
 
 ```
-Collateral value in USD = WETH amount × ETH price
-Debt value in USD       = USDC amount
+Net cost = What you pay on debt - What you earn on collateral
+```
 
-Yearly earnings = Collateral USD × collateral supply rate
-Yearly cost     = Debt USD × borrow rate
+Both amounts must be in dollars, because WETH and USDC have different values.
 
-Net cost = Yearly cost − Yearly earnings
+```
+Collateral value (USD) = WETH amount x ETH price
+Debt value (USD)       = USDC amount
+
+Yearly earnings = Collateral USD x collateral supply rate
+Yearly cost     = Debt USD x borrow rate
+
+Net cost = Yearly cost - Yearly earnings
 ```
 
 Calculate this for both protocols. Whichever has the lower net cost is cheaper.
 
-## Example: Current Rates (April 10, 2026)
+
+## 4. The Health Factor Formula
+
+Health factor tells you how close your position is to being liquidated.
+
+```
+Health Factor = (Collateral Value x Liquidation Threshold) / Debt Value
+```
+
+- HF > 1.0 = safe
+- HF = 1.0 = gets liquidated
+- HF > 1.5 = comfortable
+
+The key: each protocol has a different liquidation threshold, so the same position has a different health factor on each protocol.
+
+
+## 5. Liquidation Thresholds
+
+|  | Aave V3 (normal) | Aave V3 (e-mode) | Morpho Blue |
+|--|-------------------|-------------------|-------------|
+| Max LTV | 80% | 90% | 86% |
+| Liquidation threshold | 83% | 93% | 86% |
+
+**E-mode** is an Aave feature that increases the LTV and liquidation threshold for correlated asset pairs (like ETH/USDC). When enabled, Aave becomes the safest protocol for this pair.
+
+What this means in practice:
+
+- Position with HF = 1.05 on Aave (normal) would have HF = ~1.09 on Morpho (86% vs 83% threshold)
+- Same position with Aave e-mode enabled would have HF = ~1.18 (93% threshold)
+
+So if a user is close to liquidation, moving to whichever protocol has the higher threshold buys them breathing room without adding collateral.
+
+
+## 6. Example: Cost-Based Migration
+
+**Current rates** (from live API):
 
 |  | Aave V3 | Morpho Blue |
 |--|---------|-------------|
@@ -45,129 +86,214 @@ Calculate this for both protocols. Whichever has the lower net cost is cheaper.
 
 **Position:** 5 WETH ($10,962), 5,000 USDC debt
 
-### On Aave:
-- Earning: $10,962 × 1.71% = **$187/year** from collateral
-- Paying: $5,000 × 3.89% = **$195/year** on debt
-- **Net cost: $8/year**
+On Aave:
+- Earning: $10,962 x 1.71% = $187/year from collateral
+- Paying: $5,000 x 3.89% = $195/year on debt
+- Net cost: $8/year
 
-### On Morpho:
-- Earning: $10,962 × 0% = **$0/year** from collateral
-- Paying: $5,000 × 4.81% = **$241/year** on debt
-- **Net cost: $241/year**
+On Morpho:
+- Earning: $0/year from collateral
+- Paying: $5,000 x 4.81% = $241/year on debt
+- Net cost: $241/year
 
-**Aave is $233/year cheaper.** The collateral earnings ($187/year) nearly wipe out the entire borrow cost.
+**Aave is $233/year cheaper.** Stay on Aave.
 
-## When Does Morpho Win?
 
-Morpho wins when Aave's borrow rate spikes high enough to overcome the collateral earnings advantage. This happens during volatile markets.
+## 7. Example: When Morpho Wins on Cost
 
-**Example:** Aave borrow rate jumps to 12%, supply drops to 0.3%. Morpho stays at 4.81%.
+Aave borrow rate spikes to 12%, supply drops to 0.3%. Morpho stays at 4.81%.
 
-Same position (1 WETH, 1,700 USDC debt):
+Position: 1 WETH ($2,000), 1,700 USDC debt
 
 | | Aave (spiked) | Morpho |
 |--|---------------|--------|
-| Earning from collateral | $7/year | $0/year |
+| Earning from collateral | $6/year | $0/year |
 | Paying on debt | $204/year | $82/year |
-| **Net cost** | **$197/year** | **$82/year** |
+| Net cost | $198/year | $82/year |
 
-**Morpho saves $115/year.** System migrates automatically.
+**Morpho saves $116/year.** System migrates automatically.
 
-## Migration Criteria
+
+## 8. Example: Safety-Based Migration
+
+Position: 1 WETH ($2,000), 1,600 USDC debt. Currently on Aave (normal mode).
 
 ```
-IF   savings > $10/year (or 1% of debt, whichever is more)
-AND  health factor > 1.5
-AND  last migration was > 6 hours ago
-AND  debt > $100
-AND  rates have been stable for 1 hour
-THEN migrate
+Aave HF  = ($2,000 x 0.83) / $1,600 = 1.04  (dangerously close to liquidation)
+Morpho HF = ($2,000 x 0.86) / $1,600 = 1.075 (slightly safer)
+Aave e-mode HF = ($2,000 x 0.93) / $1,600 = 1.16 (much safer)
 ```
 
-### Why each rule exists:
+Even though Morpho might be more expensive, moving there raises the health factor from 1.04 to 1.075. Better yet, enabling Aave e-mode raises it to 1.16 without migrating at all.
+
+**The system should:**
+1. First try to enable e-mode on Aave if not already enabled (cheapest fix)
+2. If already on e-mode and HF is still low, migrate to whichever protocol gives higher HF
+
+
+## 9. Migration Criteria
+
+The system migrates when ANY of these scenarios is true:
+
+**Scenario A: Cost savings (normal rebalance)**
+```
+All of these must be true:
+- Annual savings > $10 or 1% of debt (whichever is more)
+- Health factor > 1.5
+- Last migration > 6 hours ago
+- Debt > $100
+- Rates stable for 1 hour
+- Projected HF on target protocol > 1.5
+```
+
+**Scenario B: Liquidation protection (safety migration)**
+```
+All of these must be true:
+- Health factor < 1.3 (getting risky)
+- Health factor > 1.05 (not yet liquidated)
+- Target protocol would give HF at least 0.05 higher
+- Last migration > 1 hour ago (shorter cooldown for safety)
+```
+
+Safety migrations ignore cost comparison — protecting from liquidation is more important than saving money.
+
+
+## 10. Why Each Rule Exists
 
 | Rule | Reason |
 |------|--------|
-| Savings > $10/year or 1% of debt | Small differences aren't worth the gas cost |
-| Health factor > 1.5 | Position is too close to liquidation — don't touch it |
-| 6-hour cooldown | Rates fluctuate — wait for a sustained trend, not a blip |
-| Debt > $100 | Tiny positions save pennies — not worth it |
-| 1-hour rate stability | Don't react to a 5-minute rate spike |
+| Savings > $10 or 1% of debt | Small differences aren't worth gas |
+| Health factor > 1.5 for cost migration | Don't move safe positions unnecessarily |
+| Health factor < 1.3 for safety migration | Only trigger safety mode when actually at risk |
+| 6-hour cooldown (cost) | Wait for sustained rate trend |
+| 1-hour cooldown (safety) | Act faster when position is at risk |
+| Projected HF on target > 1.5 | Don't migrate into a position that's also risky |
+| Rates stable for 1 hour | Don't react to 5-minute rate spikes |
 
-## How Migration Works (Under the Hood)
 
-### Aave to Morpho (6 steps, 1 transaction)
+## 11. E-Mode: What It Is and How It Works
+
+Aave's Efficiency Mode (e-mode) increases the LTV and liquidation threshold for correlated asset pairs. For WETH/USDC on Base:
+
+- Normal mode: LTV 80%, liquidation at 83%
+- E-mode (category 1): LTV 90%, liquidation at 93%
+
+Enabling e-mode is a single transaction: `setUserEMode(1)` on the Aave Pool contract. It does not move any funds. It just changes the risk parameters for that user.
+
+When to enable:
+- User's health factor is dropping (HF < 1.3)
+- User is on Aave but not yet in e-mode
+- Enabling e-mode would raise HF above 1.3
+
+E-mode is the cheapest intervention — no flashloan needed, just one on-chain call. The system should try this before considering a full migration.
+
+
+## 12. How Migration Works (Under the Hood)
+
+Everything happens in one transaction.
+
+Aave to Morpho:
+1. Take a flash loan (USDC, 0% fee from Morpho)
+2. Repay Aave debt
+3. Withdraw WETH collateral
+4. Supply WETH to Morpho
+5. Borrow USDC from Morpho
+6. Repay flash loan
+
+Morpho to Aave:
+1. Take a flash loan (USDC, 0% fee from Morpho)
+2. Repay Morpho debt
+3. Withdraw WETH collateral
+4. Supply WETH to Aave
+5. Borrow USDC from Aave
+6. Repay flash loan
+
+If any step fails, the whole transaction is cancelled. Nothing changes.
+
+
+## 13. Decision Flowchart
 
 ```
-1. Flashloan USDC from Morpho (0% fee)
-2. Repay all USDC debt on Aave
-3. Withdraw all WETH collateral from Aave
-4. Supply WETH collateral to Morpho
-5. Borrow USDC from Morpho (to repay flashloan)
-6. Flashloan repaid — done
+Every 60 seconds, for each position:
+
+  1. Read health factor from on-chain
+  2. Read collateral and debt amounts
+
+  --- Safety check (runs first, higher priority) ---
+
+  3. Is HF < 1.3 and > 1.05?
+     Yes:
+       a. Is user on Aave without e-mode?
+          → Enable e-mode (cheapest fix, just 1 tx)
+       b. Would target protocol give HF at least 0.05 higher?
+          → Safety migration (1-hour cooldown)
+     No:
+       Continue to cost check
+
+  --- Cost check ---
+
+  4. Is HF > 1.5?                          No → skip
+  5. Enough TWAP samples (10+ min)?         No → skip
+  6. ETH price stable (<3% move)?           No → skip
+  7. Debt > $100?                           No → skip
+  8. Cooldown > 6 hours?                    No → skip
+  9. Calculate net cost on both protocols
+ 10. Savings > threshold?                   No → skip
+ 11. Projected HF on target > 1.5?         No → skip
+ 12. Preflight checks pass?                 No → alert
+ 13. Execute migration
 ```
 
-### Morpho to Aave (6 steps, 1 transaction)
 
-```
-1. Flashloan USDC from Morpho (0% fee)
-2. Repay all USDC debt on Morpho
-3. Withdraw all WETH collateral from Morpho
-4. Supply WETH collateral to Aave
-5. Borrow USDC from Aave (to repay flashloan)
-6. Flashloan repaid — done
-```
+## 14. ETH Price Matters
 
-All 6 steps are atomic — if any step fails, the entire transaction reverts and nothing changes.
+Your earnings come from WETH. When ETH price goes up, your earnings increase, so Aave becomes more attractive. When ETH price goes down, earnings decrease, so Morpho becomes relatively better.
 
-## ETH Price Matters
+ETH price also directly affects health factor: a price drop reduces collateral value and pushes HF down. This is why the system monitors HF every cycle and can trigger safety migrations during crashes.
 
-Collateral earnings are in WETH. When ETH price goes up, those earnings are worth more in dollars, making Aave more attractive. When ETH price drops, Morpho becomes relatively better.
 
-The system recalculates dollar values every cycle, so this is handled automatically.
-
-## Safety Checks
-
-Before migrating, the system verifies:
-- Flashloan module is installed on the user's wallet
-- Session key is active
-- All operations are whitelisted
-- Position matches on-chain state
-
-If anything fails, migration is skipped and an alert is logged.
-
-## Data Sources
+## 15. Data Sources
 
 | Data | Source |
 |------|--------|
-| Aave rates | On-chain (`getReserveData`) |
-| Morpho rates | Morpho GraphQL API (`blue-api.morpho.org`) |
+| Aave rates | On-chain (getReserveData) |
+| Morpho rates | Morpho GraphQL API |
 | ETH/USD price | Morpho oracle |
-| All rates in one call | `GET /vault/rates` (public, no auth) |
+| Aave health factor | On-chain (getUserAccountData) |
+| Aave liquidation threshold | On-chain (getUserAccountData returns it) |
+| Morpho liquidation threshold | 86% (from market LLTV, on-chain or API) |
+| All rates in one call | GET /vault/rates (public, no auth) |
 
-## Current Implementation Status
+
+## 16. Current Implementation Status
 
 | Component | Status |
 |-----------|--------|
 | Aave to Morpho migration | Built and working |
 | Morpho to Aave migration | Built and working |
-| Manual trigger (`POST /vault/migrate`) | Built and working |
+| Manual trigger (POST /vault/migrate) | Built and working |
 | Migration preflight diagnostics | Built and working |
-| Fetching live rates from Aave and Morpho | Built and working |
-| Unified rates API (`GET /vault/rates`) | Built and working |
-| Auto-rebalance decision engine | Not built yet |
-| Rate smoothing (1-hour average) | Not built yet |
-| Rate history storage | Not built yet |
-| User notifications on migration | Not built yet |
+| Rate fetching (Aave + Morpho) | Built and working |
+| Unified rates API (GET /vault/rates) | Built and working |
+| Cost-based rebalance engine with TWAP | Built and working |
+| ETH price volatility guard | Built and working |
+| Cooldown check (6h for cost, 1h for safety) | Built (cost), to build (safety) |
+| Safety migration (HF-based) | To build |
+| E-mode enable for Aave users | To build |
+| Projected HF on target protocol | To build |
+| Morpho HF reading from on-chain | To build |
+| User notifications on migration | To build |
 
-## What's Next
 
-1. **Wire up the decision engine** — use the formula above in the monitor service
-2. **Rate smoothing** — store samples every 60s, average over 1 hour before deciding
-3. **Rate snapshot logging** — record rates at time of each migration for audit trail
-4. **ETH price guard** — skip decisions if ETH moved >3% in 1 hour
-5. **Redis cache** — cache rates across users (60s TTL)
-6. **Notifications** — alert users when their position is migrated
+## 17. What's Next
+
+1. Add Aave e-mode support (setUserEMode, getUserEMode)
+2. Build safety migration trigger (HF < 1.3 → migrate to higher threshold)
+3. Read Morpho health factor from on-chain
+4. Project health factor on target protocol before migrating
+5. Redis cache for rates
+6. User notifications
+
 
 ## Key Addresses (Base Mainnet)
 

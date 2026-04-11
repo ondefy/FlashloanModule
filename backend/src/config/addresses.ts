@@ -29,5 +29,15 @@ export const INFRA = {
   ERC7579_LAUNCHPAD: '0x7579011ab74c46090561ea277ba79d510c6c00ff' as Address,
 } as const;
 
+// Liquidation thresholds (used for HF projection)
+export const LIQUIDATION_THRESHOLDS = {
+  AAVE_NORMAL: 0.83,  // 83% liquidation threshold (normal mode)
+  AAVE_EMODE: 0.93,   // 93% liquidation threshold (e-mode category 1: ETH correlated)
+  MORPHO: 0.86,       // 86% LLTV for WETH/USDC market
+} as const;
+
+// Aave e-mode category for ETH-correlated assets
+export const AAVE_EMODE_CATEGORY = 1;
+
 // Chain
 export const BASE_CHAIN_ID = 8453;
