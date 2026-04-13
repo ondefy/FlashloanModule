@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Key Project Files
 
-- `PROJECT-PLAN.md` — Full architecture, flows, objectives, what's built, what's next, implementation roadmap
+- `docs/PROJECT-PLAN.md` — Full architecture, flows, objectives, what's built, what's next, implementation roadmap
+- `docs/monitor-and-rebalance-plan.md` — Monitor daemon + rebalancer design
+- `docs/rebalance-algorithm.md`, `docs/when-to-migrate.md`, `docs/when-does-it-migrate.md`, `docs/migration-example-safety.md` — Migration/rebalance decision logic
 - `supabase-schema.sql` — Complete database schema for Supabase (execute in SQL editor)
 - `contango-integration/` — Reference implementation (JWT auth, onboarding, session keys, monitoring)
 - `zyfai-executor-module/` — Reference for GuardedExecModule + TargetRegistry (already deployed)
