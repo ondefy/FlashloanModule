@@ -142,6 +142,7 @@ contract UnifiedFlashloanModule is
     error InvalidCalldata();
     error RegistryNotSet();
     error ZeroFlashloanAmount();
+    error RepaymentShortfall();
 
     /*//////////////////////////////////////////////////////////////
                              CONSTRUCTOR
@@ -285,9 +286,6 @@ contract UnifiedFlashloanModule is
         if (amount == 0) revert ZeroFlashloanAmount();
 
         address account = msg.sender;
-
-        emit FlashloanInitiated(account, provider, token, amount, executions.length);
-
         bytes memory data = abi.encode(account, token, executions);
 
         if (provider == FlashloanProvider.MORPHO) {
@@ -299,6 +297,8 @@ contract UnifiedFlashloanModule is
         } else {
             revert UnsupportedProvider();
         }
+
+        emit FlashloanInitiated(account, provider, token, amount, executions.length);
     }
 
     /**
@@ -309,9 +309,7 @@ contract UnifiedFlashloanModule is
         address morpho = _getModuleStorage().morphoBlue;
         if (msg.sender != morpho) revert UnauthorizedCaller();
 
-        (, address token,) = abi.decode(data, (address, address, Execution[]));
-
-        _handleFlashloanCallback(FlashloanProvider.MORPHO, assets, assets, data);
+        address token = _handleFlashloanCallback(FlashloanProvider.MORPHO, assets, assets, data);
 
         IERC20(token).forceApprove(morpho, assets);
     }
@@ -353,12 +351,15 @@ contract UnifiedFlashloanModule is
         uint256 assets,
         uint256 repayAmount,
         bytes calldata data
-    ) private {
-        (address account, address token, Execution[] memory executions) =
-            abi.decode(data, (address, address, Execution[]));
+    ) private returns (address token) {
+        address account;
+        Execution[] memory executions;
+        (account, token, executions) = abi.decode(data, (address, address, Execution[]));
 
         // Validate executions against whitelist
         _validateExecutions(executions);
+
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
 
         IERC20(token).safeTransfer(account, assets);
 
@@ -371,6 +372,11 @@ contract UnifiedFlashloanModule is
             callData: abi.encodeWithSelector(IERC20.transfer.selector, address(this), repayAmount)
         });
         _executeOnAccount(account, pullBack);
+
+        // Defensive: catch silent-fail / fee-on-transfer tokens. Checked subtraction reverts
+        // if balanceAfter < balanceBefore (silent fail), otherwise asserts received >= premium.
+        uint256 received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+        if (received < repayAmount - assets) revert RepaymentShortfall();
 
         emit FlashloanCallbackExecuted(
             account, provider, token, assets, executions.length
