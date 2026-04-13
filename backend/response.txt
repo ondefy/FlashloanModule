@@ -1,0 +1,1767 @@
+{
+    "status": "success",
+    "data": [
+        {
+            "id": 1959565,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Steakhouse High Yield USDC",
+            "pool_apy": 4.7124706535607075,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 4.7124706535607075,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 24391192.492062,
+            "created_at": "2026-01-07T19:26:09.678355+00:00",
+            "strategy_type": "degen",
+            "chain_id": 8453,
+            "liquidity": 7498536.521296,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 1130734282.8763258,
+                "totalSupply": 1255318223.687419,
+                "utilization": 0,
+                "performanceFee": 0,
+                "currentSupplyApy": 4.7124706535607075,
+                "nextMarketForSupply": {
+                    "marketId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "marketName": "USDC/cbBTC Market",
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24,
+                    "remainingCapUsd": 995970913.29,
+                    "currentSupplyApy": 3.9,
+                    "supplyQueueIndex": 0
+                },
+                "maxMarketUtilization": 0.9028611287852425
+            },
+            "url": "https://app.morpho.org/base/vault/0xBEEFA7B88064FeEF0cEe02AAeBBd95D30df3878F/steakhouse-high-yield-usdc-v11",
+            "collateral_symbols": [
+                "cbDOGE",
+                "cbADA",
+                "cbADA",
+                "cbETH",
+                "weETH",
+                "LBTC",
+                "PT-USDai-18JUN2026-(ARB)",
+                "cUSDO",
+                "syrupUSDC",
+                "wsrUSD",
+                "cbBTC",
+                "WETH",
+                "cbXRP",
+                "SOL",
+                "deSPXA",
+                "cbLTC",
+                "cbXRP"
+            ],
+            "status": "live",
+            "pool_address": "0xBEEFA7B88064FeEF0cEe02AAeBBd95D30df3878F",
+            "vault_allocations": [
+                {
+                    "apy": 5.01,
+                    "vaultId": "0x73527ddd796e6d4f48387adaae36f6f3d49d606d7f2a15eb0c931416a58875d8",
+                    "vaultName": "USDC/cbDOGE Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbDOGE",
+                            "exposure_usd": 947015.99
+                        }
+                    ],
+                    "percentage": 3.88,
+                    "utilization": 90.13,
+                    "marketBorrowUsd": 1274437.25,
+                    "marketSupplyUsd": 1413955.68
+                },
+                {
+                    "apy": 4.95,
+                    "vaultId": "0xd7520ad198b497b6eb75bc690268f4597630dbc12e305e9d4105843bab36e41d",
+                    "vaultName": "USDC/cbADA Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbADA",
+                            "exposure_usd": 970467.05
+                        }
+                    ],
+                    "percentage": 3.98,
+                    "utilization": 90.29,
+                    "marketBorrowUsd": 1090846.89,
+                    "marketSupplyUsd": 1208211.16
+                },
+                {
+                    "apy": 4.94,
+                    "vaultId": "0xf2a59ad1aec67664c564cb33c33538ab41372363204ce2bdcf00900b7d28c6ab",
+                    "vaultName": "USDC/cbADA Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbADA",
+                            "exposure_usd": 829268.79
+                        }
+                    ],
+                    "percentage": 3.4,
+                    "utilization": 90.05,
+                    "marketBorrowUsd": 889232.28,
+                    "marketSupplyUsd": 987450.16
+                },
+                {
+                    "apy": 4,
+                    "vaultId": "0x0ca10126f6c94cbd9cf0a48cc9516ae5e3dec5aa68303e6d988ee37c5149bf0d",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 188610.42
+                        }
+                    ],
+                    "percentage": 0.77,
+                    "utilization": 90.15,
+                    "marketBorrowUsd": 1872998.57,
+                    "marketSupplyUsd": 2077533.87
+                },
+                {
+                    "apy": 3.89,
+                    "vaultId": "0x6a331b22b56c9c0ee32a1a7d6f852d2c682ea8b27a1b0f99a9c484a37a951eb7",
+                    "vaultName": "USDC/weETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "weETH",
+                            "exposure_usd": 7150.68
+                        }
+                    ],
+                    "percentage": 0.03,
+                    "utilization": 90.06,
+                    "marketBorrowUsd": 47995.4,
+                    "marketSupplyUsd": 53293.49
+                },
+                {
+                    "apy": 3.89,
+                    "vaultId": "0x52a2a376586d0775e3e80621facc464f6e96d81c8cb70fd461527dde195a079f",
+                    "vaultName": "USDC/LBTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "LBTC",
+                            "exposure_usd": 4792.56
+                        }
+                    ],
+                    "percentage": 0.02,
+                    "utilization": 90.06,
+                    "marketBorrowUsd": 35388.34,
+                    "marketSupplyUsd": 39295.46
+                },
+                {
+                    "apy": 3.89,
+                    "vaultId": "0xaf2657ed859dcac494afc20ba83e26fa153414da971a1f082ebfcb45d73955f1",
+                    "vaultName": "USDC/PT-USDai-18JUN2026-(ARB) Market",
+                    "collateral": [
+                        {
+                            "symbol": "PT-USDai-18JUN2026-(ARB)",
+                            "exposure_usd": 18395.38
+                        }
+                    ],
+                    "percentage": 0.08,
+                    "utilization": 90.01,
+                    "marketBorrowUsd": 16559.06,
+                    "marketSupplyUsd": 18396.37
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "vaultName": "USDC/cbBTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 3765492.86
+                        }
+                    ],
+                    "percentage": 15.44,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "vaultName": "USDC/WETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 1227528.21
+                        }
+                    ],
+                    "percentage": 5.03,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74
+                },
+                {
+                    "apy": 4.98,
+                    "vaultId": "0xd4a903dc6d949519060c7707f9604fdc9772c046e05c2e3a8fce0bd7196e4109",
+                    "vaultName": "USDC/cbXRP Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbXRP",
+                            "exposure_usd": 15906142.89
+                        }
+                    ],
+                    "percentage": 65.23,
+                    "utilization": 90.05,
+                    "marketBorrowUsd": 16908159.18,
+                    "marketSupplyUsd": 18775910.75
+                },
+                {
+                    "apy": 4.88,
+                    "vaultId": "0x9125d0fa03c3137166df68bcc72283477830de2a4a5536512374c573ad4583c3",
+                    "vaultName": "USDC/cbLTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbLTC",
+                            "exposure_usd": 316162.16
+                        }
+                    ],
+                    "percentage": 1.3,
+                    "utilization": 90.02,
+                    "marketBorrowUsd": 413475.91,
+                    "marketSupplyUsd": 459334.97
+                },
+                {
+                    "apy": 4.94,
+                    "vaultId": "0xfdfecf85a4dd90a7637ae2aaf28b35061166f0e62bfc714c565eed9f7e959783",
+                    "vaultName": "USDC/cbXRP Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbXRP",
+                            "exposure_usd": 203602.26
+                        }
+                    ],
+                    "percentage": 0.83,
+                    "utilization": 90.05,
+                    "marketBorrowUsd": 279238.49,
+                    "marketSupplyUsd": 310105.75
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "cbDOGE",
+                    "address": "0xcbD06E5A2B0C65597161de254AA074E489dEb510"
+                },
+                {
+                    "symbol": "cbADA",
+                    "address": "0xcbADA732173e39521CDBE8bf59a6Dc85A9fc7b8c"
+                },
+                {
+                    "symbol": "cbETH",
+                    "address": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22"
+                },
+                {
+                    "symbol": "weETH",
+                    "address": "0x04C0599Ae5A44757c0af6F9eC3b93da8976c150A"
+                },
+                {
+                    "symbol": "LBTC",
+                    "address": "0xecAc9C5F704e954931349Da37F60E39f515c11c1"
+                },
+                {
+                    "symbol": "PT-USDai-18JUN2026-(ARB)",
+                    "address": "0xC31e19dc6c8a90d628432e15BBD538aA8c789E5D"
+                },
+                {
+                    "symbol": "cUSDO",
+                    "address": "0x83dB73EF5192de4B6a4c92bD0141Ba1a0Dc87c65"
+                },
+                {
+                    "symbol": "syrupUSDC",
+                    "address": "0x660975730059246A68521a3e2FBD4740173100f5"
+                },
+                {
+                    "symbol": "wsrUSD",
+                    "address": "0x62344be8CA1c339B46274a4017dd87AF436900B1"
+                },
+                {
+                    "symbol": "cbBTC",
+                    "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+                },
+                {
+                    "symbol": "WETH",
+                    "address": "0x4200000000000000000000000000000000000006"
+                },
+                {
+                    "symbol": "cbXRP",
+                    "address": "0xcb585250f852C6c6bf90434AB21A00f02833a4af"
+                },
+                {
+                    "symbol": "SOL",
+                    "address": "0x311935Cd80B76769bF2ecC9D8Ab7635b2139cf82"
+                },
+                {
+                    "symbol": "deSPXA",
+                    "address": "0x9c5C365e764829876243d0b289733B9D2b729685"
+                },
+                {
+                    "symbol": "cbLTC",
+                    "address": "0xcb17C9Db87B595717C857a08468793f5bAb6445F"
+                }
+            ],
+            "tvlUsd": 24391192.492062,
+            "liquidityUsd": 7498536.521296,
+            "zyfiTvl": 1478299.435586,
+            "zyfai_tvl_usd": 1478299.435586,
+            "zyfiTvl_db": 1478194.4818069998,
+            "zyfai_tvl_usd_db": 1478194.4818069998,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 20850083.719356615,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 4.885513429285714,
+            "averageCombinedApy15Days": 4.61513414952381,
+            "averageCombinedApy30Days": 4.61513414952381,
+            "averageAPY30days": 4.708733462805555,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": [
+                    {
+                        "token": "cUSDO",
+                        "severity": "healthy",
+                        "isHealthy": true,
+                        "deviation": 0,
+                        "price": 1.04459986
+                    },
+                    {
+                        "token": "syrupUSDC",
+                        "severity": "healthy",
+                        "isHealthy": true,
+                        "deviation": 0.00918199999999647,
+                        "price": 0.99990818
+                    }
+                ]
+            }
+        },
+        {
+            "id": 110185,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Wasabi Protocol",
+            "pool_name": "USDC",
+            "pool_apy": 4.709387393304119,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 4.709387393304119,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 3628240.608858,
+            "created_at": "2025-07-17T17:44:05.988368+00:00",
+            "strategy_type": "degen",
+            "chain_id": 8453,
+            "liquidity": 812508.7099013455,
+            "interestratestrategy": null,
+            "url": "https://app.wasabi.xyz/earn?vault=sUSDC&network=base",
+            "collateral_symbols": [
+                "WAVE",
+                "VVV",
+                "cbBTC",
+                "AVNT",
+                "WETH",
+                "TRYB",
+                "GAME",
+                "AERO",
+                "ZORA",
+                "SOL",
+                "CLAWD",
+                "TIBBIR",
+                "CEO",
+                "DRB",
+                "GITLAWB",
+                "BRETT",
+                "SANTA",
+                "ETHY",
+                "FELIX",
+                "VIRTUAL"
+            ],
+            "status": "live",
+            "pool_address": "0x1c4a802fd6b591bb71daa01d8335e43719048b24",
+            "vault_allocations": [
+                {
+                    "apy": null,
+                    "vaultId": "WAVE",
+                    "vaultName": "WAVE",
+                    "collateral": [
+                        {
+                            "symbol": "WAVE",
+                            "exposure_usd": 220151.51
+                        }
+                    ],
+                    "percentage": 43.97
+                },
+                {
+                    "apy": null,
+                    "vaultId": "VVV",
+                    "vaultName": "VVV",
+                    "collateral": [
+                        {
+                            "symbol": "VVV",
+                            "exposure_usd": 94421.51
+                        }
+                    ],
+                    "percentage": 18.86
+                },
+                {
+                    "apy": null,
+                    "vaultId": "cbBTC",
+                    "vaultName": "cbBTC",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 58893.29
+                        }
+                    ],
+                    "percentage": 11.76
+                },
+                {
+                    "apy": null,
+                    "vaultId": "AVNT",
+                    "vaultName": "AVNT",
+                    "collateral": [
+                        {
+                            "symbol": "AVNT",
+                            "exposure_usd": 53641.87
+                        }
+                    ],
+                    "percentage": 10.71
+                },
+                {
+                    "apy": null,
+                    "vaultId": "WETH",
+                    "vaultName": "WETH",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 31300.98
+                        }
+                    ],
+                    "percentage": 6.25
+                },
+                {
+                    "apy": null,
+                    "vaultId": "TRYB",
+                    "vaultName": "TRYB",
+                    "collateral": [
+                        {
+                            "symbol": "TRYB",
+                            "exposure_usd": 12827.32
+                        }
+                    ],
+                    "percentage": 2.56
+                },
+                {
+                    "apy": null,
+                    "vaultId": "GAME",
+                    "vaultName": "GAME",
+                    "collateral": [
+                        {
+                            "symbol": "GAME",
+                            "exposure_usd": 6436.13
+                        }
+                    ],
+                    "percentage": 1.29
+                },
+                {
+                    "apy": null,
+                    "vaultId": "AERO",
+                    "vaultName": "AERO",
+                    "collateral": [
+                        {
+                            "symbol": "AERO",
+                            "exposure_usd": 5095.98
+                        }
+                    ],
+                    "percentage": 1.02
+                },
+                {
+                    "apy": null,
+                    "vaultId": "ZORA",
+                    "vaultName": "ZORA",
+                    "collateral": [
+                        {
+                            "symbol": "ZORA",
+                            "exposure_usd": 3475.55
+                        }
+                    ],
+                    "percentage": 0.69
+                },
+                {
+                    "apy": null,
+                    "vaultId": "SOL",
+                    "vaultName": "SOL",
+                    "collateral": [
+                        {
+                            "symbol": "SOL",
+                            "exposure_usd": 2049.43
+                        }
+                    ],
+                    "percentage": 0.41
+                },
+                {
+                    "apy": null,
+                    "vaultId": "CLAWD",
+                    "vaultName": "CLAWD",
+                    "collateral": [
+                        {
+                            "symbol": "CLAWD",
+                            "exposure_usd": 1755.57
+                        }
+                    ],
+                    "percentage": 0.35
+                },
+                {
+                    "apy": null,
+                    "vaultId": "TIBBIR",
+                    "vaultName": "TIBBIR",
+                    "collateral": [
+                        {
+                            "symbol": "TIBBIR",
+                            "exposure_usd": 1503.11
+                        }
+                    ],
+                    "percentage": 0.3
+                },
+                {
+                    "apy": null,
+                    "vaultId": "CEO",
+                    "vaultName": "CEO",
+                    "collateral": [
+                        {
+                            "symbol": "CEO",
+                            "exposure_usd": 984.87
+                        }
+                    ],
+                    "percentage": 0.2
+                },
+                {
+                    "apy": null,
+                    "vaultId": "DRB",
+                    "vaultName": "DRB",
+                    "collateral": [
+                        {
+                            "symbol": "DRB",
+                            "exposure_usd": 973.26
+                        }
+                    ],
+                    "percentage": 0.19
+                },
+                {
+                    "apy": null,
+                    "vaultId": "GITLAWB",
+                    "vaultName": "GITLAWB",
+                    "collateral": [
+                        {
+                            "symbol": "GITLAWB",
+                            "exposure_usd": 870.76
+                        }
+                    ],
+                    "percentage": 0.17
+                },
+                {
+                    "apy": null,
+                    "vaultId": "BRETT",
+                    "vaultName": "BRETT",
+                    "collateral": [
+                        {
+                            "symbol": "BRETT",
+                            "exposure_usd": 819.38
+                        }
+                    ],
+                    "percentage": 0.16
+                },
+                {
+                    "apy": null,
+                    "vaultId": "SANTA",
+                    "vaultName": "SANTA",
+                    "collateral": [
+                        {
+                            "symbol": "SANTA",
+                            "exposure_usd": 792.99
+                        }
+                    ],
+                    "percentage": 0.16
+                },
+                {
+                    "apy": null,
+                    "vaultId": "ETHY",
+                    "vaultName": "ETHY",
+                    "collateral": [
+                        {
+                            "symbol": "ETHY",
+                            "exposure_usd": 672.26
+                        }
+                    ],
+                    "percentage": 0.13
+                },
+                {
+                    "apy": null,
+                    "vaultId": "FELIX",
+                    "vaultName": "FELIX",
+                    "collateral": [
+                        {
+                            "symbol": "FELIX",
+                            "exposure_usd": 666.56
+                        }
+                    ],
+                    "percentage": 0.13
+                },
+                {
+                    "apy": null,
+                    "vaultId": "VIRTUAL",
+                    "vaultName": "VIRTUAL",
+                    "collateral": [
+                        {
+                            "symbol": "VIRTUAL",
+                            "exposure_usd": 648.58
+                        }
+                    ],
+                    "percentage": 0.13
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": null,
+            "tvlUsd": 3628240.608858,
+            "liquidityUsd": 812508.7099013455,
+            "zyfiTvl": 443250.757407,
+            "zyfai_tvl_usd": 443250.757407,
+            "zyfiTvl_db": 443321.53880000004,
+            "zyfai_tvl_usd_db": 443321.53880000004,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 3554971.092877744,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 4.880845858928572,
+            "averageCombinedApy15Days": 4.47763064875,
+            "averageCombinedApy30Days": 4.47763064875,
+            "averageAPY30days": 4.12687924838889,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 2863731,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Euler",
+            "pool_name": "AlphaGrowth",
+            "pool_apy": 4.649402371777708,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 4.649402371777708,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 636419.557785,
+            "created_at": "2026-03-02T17:08:07.714613+00:00",
+            "strategy_type": "degen",
+            "chain_id": 8453,
+            "liquidity": 221629.62806,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Euler",
+                "borrowAPY": 7.926289615707284,
+                "modelType": "linear",
+                "totalBorrow": 0,
+                "totalSupply": 636419.557785,
+                "utilization": 0,
+                "interestFeeRate": 0.1
+            },
+            "url": "https://app.euler.finance/vault/0x4C1aeda9B43EfcF1da1d1755b18802aAbe90f61E?network=base&tab=positions",
+            "collateral_symbols": [
+                "ereUSD-2"
+            ],
+            "status": "live",
+            "pool_address": "0x4C1aeda9B43EfcF1da1d1755b18802aAbe90f61E",
+            "vault_allocations": [
+                {
+                    "apy": 4.649402371777708,
+                    "vaultId": "0x4C1aeda9B43EfcF1da1d1755b18802aAbe90f61E",
+                    "vaultName": "AlphaGrowth",
+                    "collateral": [
+                        {
+                            "symbol": "ereUSD-2",
+                            "exposure_usd": 415085.81
+                        }
+                    ],
+                    "percentage": 100
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": null,
+            "tvlUsd": 636419.557785,
+            "liquidityUsd": 221629.62806,
+            "zyfiTvl": 160153.863987,
+            "zyfai_tvl_usd": 160153.863987,
+            "zyfiTvl_db": 160435.554723,
+            "zyfai_tvl_usd_db": 160435.554723,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 630890.4313621394,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 4.706827672499999,
+            "averageCombinedApy15Days": 4.731947927261905,
+            "averageCombinedApy30Days": 4.731947927261905,
+            "averageAPY30days": 5.001301826138888,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 143032,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Gauntlet USDC Prime",
+            "pool_apy": 3.887301108865171,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 3.887301108865171,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 363990950.043797,
+            "created_at": "2025-08-05T11:10:06.045832+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 122656356.567551,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 1112970944.08397,
+                "totalSupply": 1235594869.7154026,
+                "utilization": 0,
+                "performanceFee": 0,
+                "currentSupplyApy": 3.887301108865171,
+                "nextMarketForSupply": {
+                    "marketId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "marketName": "USDC/cbBTC Market",
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24,
+                    "remainingCapUsd": 407772206.2,
+                    "currentSupplyApy": 3.9,
+                    "supplyQueueIndex": 0
+                },
+                "maxMarketUtilization": 0.9028914658966951
+            },
+            "url": "https://app.morpho.org/base/vault/0xeE8F4eC5672F09119b96Ab6fB59C27E1b7e44b61/gauntlet-usdc-prime",
+            "collateral_symbols": [
+                "cbBTC",
+                "WETH",
+                "wstETH",
+                "cbETH",
+                "cbETH",
+                "cbETH"
+            ],
+            "status": "live",
+            "pool_address": "0xeE8F4eC5672F09119b96Ab6fB59C27E1b7e44b61",
+            "vault_allocations": [
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "vaultName": "USDC/cbBTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 342030098.4
+                        }
+                    ],
+                    "percentage": 93.99,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "vaultName": "USDC/WETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 19948492.08
+                        }
+                    ],
+                    "percentage": 5.48,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74
+                },
+                {
+                    "apy": 3.82,
+                    "vaultId": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+                    "vaultName": "USDC/wstETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "wstETH",
+                            "exposure_usd": 114797.05
+                        }
+                    ],
+                    "percentage": 0.03,
+                    "utilization": 90.29,
+                    "marketBorrowUsd": 838489.02,
+                    "marketSupplyUsd": 928670.89
+                },
+                {
+                    "apy": 4,
+                    "vaultId": "0x0ca10126f6c94cbd9cf0a48cc9516ae5e3dec5aa68303e6d988ee37c5149bf0d",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 506840.73
+                        }
+                    ],
+                    "percentage": 0.14,
+                    "utilization": 90.15,
+                    "marketBorrowUsd": 1872998.57,
+                    "marketSupplyUsd": 2077533.87
+                },
+                {
+                    "apy": 3.82,
+                    "vaultId": "0x1c21c59df9db44bf6f645d854ee710a8ca17b479451447e9f56758aee10a2fad",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 682120.55
+                        }
+                    ],
+                    "percentage": 0.19,
+                    "utilization": 90.02,
+                    "marketBorrowUsd": 1658962.87,
+                    "marketSupplyUsd": 1842940.26
+                },
+                {
+                    "apy": 3.96,
+                    "vaultId": "0xdba352d93a64b17c71104cbddc6aef85cd432322a1446b5b65163cbbc615cd0c",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 612655.45
+                        }
+                    ],
+                    "percentage": 0.17,
+                    "utilization": 90.09,
+                    "marketBorrowUsd": 611158.38,
+                    "marketSupplyUsd": 678399.72
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "cbBTC",
+                    "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+                },
+                {
+                    "symbol": "WETH",
+                    "address": "0x4200000000000000000000000000000000000006"
+                },
+                {
+                    "symbol": "wstETH",
+                    "address": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452"
+                },
+                {
+                    "symbol": "cbETH",
+                    "address": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22"
+                }
+            ],
+            "tvlUsd": 363990950.043797,
+            "liquidityUsd": 122656356.567551,
+            "zyfiTvl": 136449.740662,
+            "zyfai_tvl_usd": 136449.740662,
+            "zyfiTvl_db": 112255.25401299994,
+            "zyfai_tvl_usd_db": 112255.25401299994,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 356519805.2660567,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 3.9381028870238097,
+            "averageCombinedApy15Days": 3.8826007592261904,
+            "averageCombinedApy30Days": 3.8826007592261904,
+            "averageAPY30days": 3.8217375079444436,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 1968356,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Steakhouse Prime USDC",
+            "pool_apy": 3.886354283726745,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 3.886354283726745,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 481962376.202794,
+            "created_at": "2026-01-08T09:20:50.175249+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 122496716.014478,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 1111521296.6801567,
+                "totalSupply": 1233987799.1052477,
+                "utilization": 0,
+                "performanceFee": 0,
+                "currentSupplyApy": 3.886354283726745,
+                "nextMarketForSupply": {
+                    "marketId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "marketName": "USDC/cbBTC Market",
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24,
+                    "remainingCapUsd": 525927716.21,
+                    "currentSupplyApy": 3.9,
+                    "supplyQueueIndex": 0
+                },
+                "maxMarketUtilization": 0.901548994619164
+            },
+            "url": "https://app.morpho.org/base/vault/0xBEEFE94c8aD530842bfE7d8B397938fFc1cb83b2/steakhouse-prime-usdc",
+            "collateral_symbols": [
+                "cbETH",
+                "cbETH",
+                "cbBTC",
+                "WETH"
+            ],
+            "status": "live",
+            "pool_address": "0xBEEFE94c8aD530842bfE7d8B397938fFc1cb83b2",
+            "vault_allocations": [
+                {
+                    "apy": 4,
+                    "vaultId": "0x0ca10126f6c94cbd9cf0a48cc9516ae5e3dec5aa68303e6d988ee37c5149bf0d",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 920700.58
+                        }
+                    ],
+                    "percentage": 0.19,
+                    "utilization": 90.15,
+                    "marketBorrowUsd": 1872998.57,
+                    "marketSupplyUsd": 2077533.87
+                },
+                {
+                    "apy": 3.82,
+                    "vaultId": "0x1c21c59df9db44bf6f645d854ee710a8ca17b479451447e9f56758aee10a2fad",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 229495.34
+                        }
+                    ],
+                    "percentage": 0.05,
+                    "utilization": 90.02,
+                    "marketBorrowUsd": 1658962.87,
+                    "marketSupplyUsd": 1842940.26
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "vaultName": "USDC/cbBTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 473808689.93
+                        }
+                    ],
+                    "percentage": 98.33,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "vaultName": "USDC/WETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 6876448.03
+                        }
+                    ],
+                    "percentage": 1.43,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "cbETH",
+                    "address": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22"
+                },
+                {
+                    "symbol": "cbBTC",
+                    "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+                },
+                {
+                    "symbol": "WETH",
+                    "address": "0x4200000000000000000000000000000000000006"
+                }
+            ],
+            "tvlUsd": 481962376.202794,
+            "liquidityUsd": 122496716.014478,
+            "zyfiTvl": 2765760.536419,
+            "zyfai_tvl_usd": 2765760.536419,
+            "zyfiTvl_db": 2766029.6985370014,
+            "zyfai_tvl_usd_db": 2766029.6985370014,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 466856762.72268087,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 3.925324931904762,
+            "averageCombinedApy15Days": 3.8740209386904767,
+            "averageCombinedApy30Days": 3.8740209386904767,
+            "averageAPY30days": 3.817469984916666,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 55870,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Spark",
+            "pool_name": "USDC",
+            "pool_apy": 3.7546000000000004,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 3.7546000000000004,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 14150101.42712397,
+            "created_at": "2025-06-09T10:24:01.828754+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 3537525.3567809924,
+            "interestratestrategy": null,
+            "url": "https://app.spark.fi",
+            "collateral_symbols": [
+                "MORPHO",
+                "PSM3",
+                "IDLE",
+                "PSM"
+            ],
+            "status": "live",
+            "pool_address": "0x3128a0f7f0ea68e7b7c9b00afa7e41045828e858",
+            "vault_allocations": [
+                {
+                    "apy": null,
+                    "vaultId": "0xf6e72db5454dd049d0788e411b06cfaf16853042",
+                    "vaultName": "PSM (Ethereum)",
+                    "collateral": [
+                        {
+                            "symbol": "PSM",
+                            "exposure_usd": 13967565.12
+                        }
+                    ],
+                    "percentage": 98.71
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0x1601843c5e9bc251a3272907010afa41fa18347e",
+                    "vaultName": "PSM3 (Base)",
+                    "collateral": [
+                        {
+                            "symbol": "PSM3",
+                            "exposure_usd": 49525.35
+                        }
+                    ],
+                    "percentage": 0.35
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0x2b05f8e1cacc6974fd79a673a341fe1f58d27266",
+                    "vaultName": "PSM3 (Arbitrum)",
+                    "collateral": [
+                        {
+                            "symbol": "PSM3",
+                            "exposure_usd": 32545.23
+                        }
+                    ],
+                    "percentage": 0.23
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0xe0f9978b907853f354d79188a3defbd41978af62",
+                    "vaultName": "PSM3 (Optimism)",
+                    "collateral": [
+                        {
+                            "symbol": "PSM3",
+                            "exposure_usd": 32545.23
+                        }
+                    ],
+                    "percentage": 0.23
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0x7b42ed932f26509465f7ce3faf76ffce1275312f",
+                    "vaultName": "PSM3 (Unichain)",
+                    "collateral": [
+                        {
+                            "symbol": "PSM3",
+                            "exposure_usd": 32545.23
+                        }
+                    ],
+                    "percentage": 0.23
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0x28b3a8fb53b741a8fd78c0fb9a6b2393d896a43d",
+                    "vaultName": "IDLE (Ethereum)",
+                    "collateral": [
+                        {
+                            "symbol": "IDLE",
+                            "exposure_usd": 32545.23
+                        }
+                    ],
+                    "percentage": 0.23
+                },
+                {
+                    "apy": null,
+                    "vaultId": "0x56a76b428244a50513ec81e225a293d128fd581d",
+                    "vaultName": "MORPHO (Ethereum)",
+                    "collateral": [
+                        {
+                            "symbol": "MORPHO",
+                            "exposure_usd": 2830.02
+                        }
+                    ],
+                    "percentage": 0.02
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": null,
+            "tvlUsd": 14150101.42712397,
+            "liquidityUsd": 3537525.3567809924,
+            "zyfiTvl": 202081.922984,
+            "zyfai_tvl_usd": 202081.922984,
+            "zyfiTvl_db": 327346.42277,
+            "zyfai_tvl_usd_db": 327346.42277,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 13826973.052886305,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 3.753964285714286,
+            "averageCombinedApy15Days": 3.753923809523809,
+            "averageCombinedApy30Days": 3.753923809523809,
+            "averageAPY30days": 3.754122777777778,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 1959563,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Spark USDC Vault",
+            "pool_apy": 3.5169403900287075,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 3.5169403900287075,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 12163991.778077,
+            "created_at": "2026-01-07T19:26:09.678355+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 6236710.542586,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 56573204.10918452,
+                "totalSupply": 62803995.73893155,
+                "utilization": 0,
+                "performanceFee": 0.1,
+                "currentSupplyApy": 3.5169403900287075,
+                "nextMarketForSupply": {
+                    "marketId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "marketName": "USDC/WETH Market",
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74,
+                    "remainingCapUsd": 987575620.72,
+                    "currentSupplyApy": 3.9,
+                    "supplyQueueIndex": 0
+                },
+                "maxMarketUtilization": 0.9007898851587777
+            },
+            "url": "https://app.morpho.org/base/vault/0x7BfA7C4f149E7415b73bdeDfe609237e29CBF34A/spark-usdc-vault",
+            "collateral_symbols": [
+                "WETH"
+            ],
+            "status": "live",
+            "pool_address": "0x7BfA7C4f149E7415b73bdeDfe609237e29CBF34A",
+            "vault_allocations": [
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "vaultName": "USDC/WETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 12160785.42
+                        }
+                    ],
+                    "percentage": 100,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "WETH",
+                    "address": "0x4200000000000000000000000000000000000006"
+                }
+            ],
+            "tvlUsd": 12163991.778077,
+            "liquidityUsd": 6236710.542586,
+            "zyfiTvl": 6977.794537,
+            "zyfai_tvl_usd": 6977.794537,
+            "zyfiTvl_db": 6978.413399,
+            "zyfai_tvl_usd_db": 6978.413399,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 12234457.022801997,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 3.5479629915476187,
+            "averageCombinedApy15Days": 3.506723364702381,
+            "averageCombinedApy30Days": 3.506723364702381,
+            "averageAPY30days": 3.4379030912777777,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 169139,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Compound V3",
+            "pool_name": "USDC",
+            "pool_apy": 2.9544782081184,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 2.9544782081184,
+            "sonic_points": 0,
+            "protocol_points": null,
+            "tvl": 10492644.720647037,
+            "created_at": "2025-08-22T08:36:43.0787+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 1881307.7131730374,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "lowSlope": 1.141552511e-9,
+                "protocol": "Compound V3",
+                "highSlope": 1.0134449518e-7,
+                "modelType": "jump",
+                "borrowKink": 0.9,
+                "supplyKink": 0.9,
+                "totalBorrow": 8611337.007474,
+                "totalSupply": 10492820.47539,
+                "utilization": 0.8206883918476954,
+                "kinkUtilization": 0.9
+            },
+            "url": "https://app.compound.finance/?market=usdc-basemainnet",
+            "collateral_symbols": [
+                "cbETH",
+                "WETH",
+                "wstETH",
+                "cbBTC",
+                "tBTC"
+            ],
+            "status": "live",
+            "pool_address": "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+            "vault_allocations": [
+                {
+                    "vaultName": "cbETH",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 827917.8
+                        }
+                    ],
+                    "percentage": 9.61
+                },
+                {
+                    "vaultName": "WETH",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 2309405.96
+                        }
+                    ],
+                    "percentage": 26.82
+                },
+                {
+                    "vaultName": "wstETH",
+                    "collateral": [
+                        {
+                            "symbol": "wstETH",
+                            "exposure_usd": 938576.07
+                        }
+                    ],
+                    "percentage": 10.9
+                },
+                {
+                    "vaultName": "cbBTC",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 4051495.57
+                        }
+                    ],
+                    "percentage": 47.05
+                },
+                {
+                    "vaultName": "tBTC",
+                    "collateral": [
+                        {
+                            "symbol": "tBTC",
+                            "exposure_usd": 483797.37
+                        }
+                    ],
+                    "percentage": 5.62
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": null,
+            "tvlUsd": 10492644.720647037,
+            "liquidityUsd": 1881307.7131730374,
+            "zyfiTvl": 18407.711289,
+            "zyfai_tvl_usd": 18407.711289,
+            "zyfiTvl_db": 18409.123881,
+            "zyfai_tvl_usd_db": 18409.123881,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 10503392.27880633,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 2.9993013904761905,
+            "averageCombinedApy15Days": 2.9868663137500002,
+            "averageCombinedApy30Days": 2.9868663137500002,
+            "averageAPY30days": 2.938896598277778,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 143036,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Steakhouse USDC",
+            "pool_apy": 2.9155744060585698,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 2.9155744060585698,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 274951518.946794,
+            "created_at": "2025-08-05T11:10:06.045832+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 122428443.222784,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 1112359785.7003443,
+                "totalSupply": 1234916469.9941177,
+                "utilization": 0,
+                "performanceFee": 0.25,
+                "currentSupplyApy": 2.9155744060585698,
+                "nextMarketForSupply": {
+                    "marketId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "marketName": "USDC/cbBTC Market",
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24,
+                    "remainingCapUsd": 743466392.03,
+                    "currentSupplyApy": 3.9,
+                    "supplyQueueIndex": 0
+                },
+                "maxMarketUtilization": 0.9028914658966951
+            },
+            "url": "https://app.morpho.org/base/vault/0xbeeF010f9cb27031ad51e3333f9aF9C6B1228183/steakhouse-usdc",
+            "collateral_symbols": [
+                "wstETH",
+                "cbETH",
+                "cbETH",
+                "cbBTC",
+                "WETH"
+            ],
+            "status": "live",
+            "pool_address": "0xbeeF010f9cb27031ad51e3333f9aF9C6B1228183",
+            "vault_allocations": [
+                {
+                    "apy": 3.82,
+                    "vaultId": "0x13c42741a359ac4a8aa8287d2be109dcf28344484f91185f9a79bd5a805a55ae",
+                    "vaultName": "USDC/wstETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "wstETH",
+                            "exposure_usd": 18452.71
+                        }
+                    ],
+                    "percentage": 0.01,
+                    "utilization": 90.29,
+                    "marketBorrowUsd": 838489.02,
+                    "marketSupplyUsd": 928670.89
+                },
+                {
+                    "apy": 4,
+                    "vaultId": "0x0ca10126f6c94cbd9cf0a48cc9516ae5e3dec5aa68303e6d988ee37c5149bf0d",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 115047.41
+                        }
+                    ],
+                    "percentage": 0.04,
+                    "utilization": 90.15,
+                    "marketBorrowUsd": 1872998.57,
+                    "marketSupplyUsd": 2077533.87
+                },
+                {
+                    "apy": 3.82,
+                    "vaultId": "0x1c21c59df9db44bf6f645d854ee710a8ca17b479451447e9f56758aee10a2fad",
+                    "vaultName": "USDC/cbETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbETH",
+                            "exposure_usd": 514267.77
+                        }
+                    ],
+                    "percentage": 0.19,
+                    "utilization": 90.02,
+                    "marketBorrowUsd": 1658962.87,
+                    "marketSupplyUsd": 1842940.26
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836",
+                    "vaultName": "USDC/cbBTC Market",
+                    "collateral": [
+                        {
+                            "symbol": "cbBTC",
+                            "exposure_usd": 256270014.11
+                        }
+                    ],
+                    "percentage": 93.23,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 1051416131.14,
+                    "marketSupplyUsd": 1167263329.24
+                },
+                {
+                    "apy": 3.9,
+                    "vaultId": "0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda",
+                    "vaultName": "USDC/WETH Market",
+                    "collateral": [
+                        {
+                            "symbol": "WETH",
+                            "exposure_usd": 17961261.42
+                        }
+                    ],
+                    "percentage": 6.53,
+                    "utilization": 90.08,
+                    "marketBorrowUsd": 56573204.11,
+                    "marketSupplyUsd": 62803995.74
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "wstETH",
+                    "address": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452"
+                },
+                {
+                    "symbol": "cbETH",
+                    "address": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22"
+                },
+                {
+                    "symbol": "cbBTC",
+                    "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+                },
+                {
+                    "symbol": "WETH",
+                    "address": "0x4200000000000000000000000000000000000006"
+                }
+            ],
+            "tvlUsd": 274951518.946794,
+            "liquidityUsd": 122428443.222784,
+            "zyfiTvl": 0,
+            "zyfai_tvl_usd": 0,
+            "zyfiTvl_db": 0,
+            "zyfai_tvl_usd_db": 0,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 270834560.7025924,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 2.9526181520238093,
+            "averageCombinedApy15Days": 2.91150841297619,
+            "averageCombinedApy30Days": 2.91150841297619,
+            "averageAPY30days": 2.8723506279444444,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 100488,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Aave V3",
+            "pool_name": "USDC",
+            "pool_apy": 2.667216116674947,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 2.667216116674947,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 356946866.281779,
+            "created_at": "2025-07-10T12:48:30.942851+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 82141329,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "lowSlope": 0.045,
+                "protocol": "Aave V3",
+                "highSlope": 0.1,
+                "modelType": "kinked",
+                "totalBorrow": 274806624.63615,
+                "totalSupply": 356946866.281779,
+                "utilization": 0.7698810399954981,
+                "reserveFactor": 0.1,
+                "kinkUtilization": 0.9
+            },
+            "url": "https://app.aave.com/reserve-overview/?underlyingAsset=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&marketName=proto_base_v3",
+            "collateral_symbols": null,
+            "status": "live",
+            "pool_address": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+            "vault_allocations": null,
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": null,
+            "tvlUsd": 356946866.281779,
+            "liquidityUsd": 82141329,
+            "zyfiTvl": 10734.294201,
+            "zyfai_tvl_usd": 10734.294201,
+            "zyfiTvl_db": 10735.045159,
+            "zyfai_tvl_usd_db": 10735.045159,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 362139200.4778344,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 2.706783959166667,
+            "averageCombinedApy15Days": 2.669915613333334,
+            "averageCombinedApy30Days": 2.669915613333334,
+            "averageAPY30days": 2.5774274149444443,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        },
+        {
+            "id": 55517,
+            "timestamp": "2026-04-13T11:55:17.89+00:00",
+            "protocol_name": "Morpho",
+            "pool_name": "Universal - USDC",
+            "pool_apy": 0.45008176877898154,
+            "rewards_apy": 0,
+            "protocol_apy": null,
+            "combined_apy": 0.45008176877898154,
+            "sonic_points": null,
+            "protocol_points": null,
+            "tvl": 121501.014024,
+            "created_at": "2025-06-09T06:29:38.074384+00:00",
+            "strategy_type": "safe",
+            "chain_id": 8453,
+            "liquidity": 115164.745703,
+            "interestratestrategy": {
+                "baseRate": 0,
+                "protocol": "Morpho",
+                "modelType": "vault",
+                "totalBorrow": 6336.2683210000105,
+                "totalSupply": 170367.3996421563,
+                "utilization": 0,
+                "performanceFee": 0.1,
+                "currentSupplyApy": 0.45008176877898154,
+                "maxMarketUtilization": 0
+            },
+            "url": "https://app.morpho.org/base/vault/0xB7890CEE6CF4792cdCC13489D36D9d42726ab863/universal-usdc",
+            "collateral_symbols": [
+                "uXRP"
+            ],
+            "status": "live",
+            "pool_address": "0xB7890CEE6CF4792cdCC13489D36D9d42726ab863",
+            "vault_allocations": [
+                {
+                    "apy": 0,
+                    "vaultId": "0x38c846197ac32a752a60c25d4536ebb0c3920c532e9a859c38c91efb7b8c2abb",
+                    "vaultName": "Unknown Market",
+                    "collateral": [],
+                    "percentage": 94.79,
+                    "utilization": 0,
+                    "marketBorrowUsd": 0,
+                    "marketSupplyUsd": 170367.4
+                },
+                {
+                    "apy": 6.1,
+                    "vaultId": "0xa426ca680bd5a7dc0f95942ba876a7df399cdf8149f798bcc4e94f03e35d08fa",
+                    "vaultName": "USDC/uXRP Market",
+                    "collateral": [
+                        {
+                            "symbol": "uXRP",
+                            "exposure_usd": 6334.6
+                        }
+                    ],
+                    "percentage": 5.21,
+                    "utilization": 100,
+                    "marketBorrowUsd": 6334.69,
+                    "marketSupplyUsd": 6334.69
+                }
+            ],
+            "native_tokens": [
+                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            ],
+            "token_symbol": "USDC",
+            "is_apy_normalized": false,
+            "collateral_tokens": [
+                {
+                    "symbol": "uXRP",
+                    "address": "0x2615a94df961278DcbC41Fb0a54fEc5f10a693aE"
+                }
+            ],
+            "tvlUsd": 121501.014024,
+            "liquidityUsd": 115164.745703,
+            "zyfiTvl": 733.339079,
+            "zyfai_tvl_usd": 733.339079,
+            "zyfiTvl_db": 838.5053640000001,
+            "zyfai_tvl_usd_db": 838.5053640000001,
+            "isTvlStable": true,
+            "averageTvlForPreviousDay": 121981.17046695121,
+            "isApyStable7Days": true,
+            "isApyStable10Days": true,
+            "isApyStable15Days": true,
+            "isApyStable30Days": true,
+            "isApyTvlStable": true,
+            "isApyNormalized": false,
+            "isUtilizationStable": true,
+            "averageCombinedApy7Days": 0.7576897171428572,
+            "averageCombinedApy15Days": 2.164872253809524,
+            "averageCombinedApy30Days": 2.164872253809524,
+            "averageAPY30days": 2.937774021055555,
+            "collateralHealth": {
+                "isHealthy": true,
+                "checkedTokens": []
+            }
+        }
+    ]
+}

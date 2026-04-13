@@ -11,6 +11,7 @@ import authRoutes from './routes/auth.routes.js';
 import onboardingRoutes from './routes/onboarding.routes.js';
 import positionRoutes from './routes/position.routes.js';
 import vaultRoutes from './routes/vault.routes.js';
+import strategyRoutes from './routes/strategy.routes.js';
 import { startMonitor } from './services/monitor.service.js';
 
 const env = getEnv();
@@ -35,6 +36,7 @@ app.use('/api/v2/auth', authRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/positions', positionRoutes);
 app.use('/vault', vaultRoutes);
+app.use('/api/strategy', strategyRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {

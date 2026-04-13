@@ -20,6 +20,10 @@ const envSchema = z.object({
   GUARDED_EXEC_MODULE_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   TARGET_REGISTRY_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
 
+  // DeFi API (external yield opportunities)
+  DEFI_API_URL: z.string().url().default('https://defiapi.zyf.ai'),
+  OTHER_BACKEND_API_KEY: z.string().optional(),
+
   // Server
   PORT: z.coerce.number().default(3001),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
