@@ -87,8 +87,3 @@ Regardless of which backend owns it:
 9. Net APY monitor cron
 10. Session key permission entries for Aave borrow + repay + each pool's deposit/withdraw
 11. Auto-exit trigger (when HF critical or APY negative)
-
-## Where each goes (current plan)
-
-- **Ours:** 1 (done), contract side (flashloan + TargetRegistry already done)
-- **Utkir's:** 2–11 (per founder's direction)
