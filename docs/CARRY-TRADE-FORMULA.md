@@ -93,3 +93,36 @@ Example with 10 WETH at $2,000 ETH:
 Both match ($467.80 / $2,000 = 0.234 WETH).
 
 The code labels this number `netApyInWeth` because the user's deposit is WETH.
+
+## ETH price caveat
+
+"Assumes ETH price is flat" = the 2.34% number is calculated as if 1 ETH stays $2,000 for the whole year.
+
+"Real WETH return drifts with ETH price" = in real life ETH price moves, so the actual yield measured in WETH will be different from what we quoted.
+
+"USDC legs are fixed USD" = the USDC borrow cost and USDC deposit yield produce DOLLAR amounts, not WETH amounts.
+
+Why this matters with one example:
+
+User deposits 10 WETH. Suppose USDC legs net = $250 loss per year.
+
+If ETH stays at $2,000:
+
+    $250 loss = 0.125 WETH loss
+
+If ETH pumps to $4,000 (ETH doubles during the year):
+
+    $250 loss = 0.0625 WETH loss (each dollar is worth fewer WETH now)
+
+So the USDC loss hurts LESS in WETH terms → real WETH APY is BETTER than quoted.
+
+If ETH dumps to $1,000:
+
+    $250 loss = 0.25 WETH loss (each dollar is worth more WETH now)
+
+USDC loss hurts MORE → real WETH APY is WORSE than quoted.
+
+The WETH supply leg (1.8%) is unaffected either way because it is earned directly in WETH.
+
+Bottom line: the quoted APY is a snapshot assuming flat ETH. Fine for display. Real yield will differ depending on where ETH price goes.
+
