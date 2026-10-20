@@ -148,7 +148,9 @@ contract UnifiedFlashloanModuleSafe7579ForkTest is Test {
 
     /// @notice Nested executor calls work and a flashloan round trip through the Adapter repays
     function test_Fork_FlashloanRoundTripThroughGuardedExecAndAdapter() public {
-        // Aave rounds the aToken balance down by up to 1 wei; the buffer covers that shortfall.
+        // Aave rounds aToken balances and transfers by a wei, so withdraw slightly less than was
+        // supplied; the Safe's own USDC buffer covers the gap at repayment.
+        uint256 withdrawAmount = FLASH_AMOUNT - 10;
         deal(USDC, safe, 1e6);
         uint256 morphoBefore = IERC20(USDC).balanceOf(MORPHO_BLUE);
         uint256 safeBefore = IERC20(USDC).balanceOf(safe);
@@ -156,16 +158,17 @@ contract UnifiedFlashloanModuleSafe7579ForkTest is Test {
         Execution[] memory inner = new Execution[](4);
         inner[0] = _exec(USDC, abi.encodeCall(IERC20.approve, (ADAPTER, FLASH_AMOUNT)));
         inner[1] = _exec(ADAPTER, abi.encodeCall(IAdapter.supplyForSelf, (AAVE_POOL, USDC, FLASH_AMOUNT)));
-        inner[2] = _exec(A_USDC, abi.encodeCall(IERC20.approve, (ADAPTER, FLASH_AMOUNT - 1)));
-        inner[3] = _exec(ADAPTER, abi.encodeCall(IAdapter.withdrawForSelf, (AAVE_POOL, USDC, FLASH_AMOUNT - 1)));
+        inner[2] = _exec(A_USDC, abi.encodeCall(IERC20.approve, (ADAPTER, withdrawAmount)));
+        inner[3] = _exec(ADAPTER, abi.encodeCall(IAdapter.withdrawForSelf, (AAVE_POOL, USDC, withdrawAmount)));
 
         // GuardedExec is entered twice: the outer session-key batch and the callback's inner batch
         vm.expectCall(GUARDED_EXEC, abi.encodeCall(IGuardedExecModule.executeGuardedBatch, (inner)), 1);
         _flashloanViaSessionPath(FlashloanProvider.MORPHO, inner);
 
+        uint256 safeAfter = IERC20(USDC).balanceOf(safe);
         assertEq(IERC20(USDC).balanceOf(MORPHO_BLUE), morphoBefore, "Morpho repaid");
-        assertApproxEqAbs(IERC20(USDC).balanceOf(safe), safeBefore, 2, "Safe USDC unchanged up to Aave rounding");
-        assertLe(IERC20(A_USDC).balanceOf(safe), 2, "aUSDC dust only");
+        assertApproxEqAbs(safeBefore - safeAfter, FLASH_AMOUNT - withdrawAmount, 2, "Safe paid only the aUSDC left");
+        assertApproxEqAbs(safeAfter + IERC20(A_USDC).balanceOf(safe), safeBefore, 2, "USDC + aUSDC conserved");
         assertEq(IERC20(USDC).balanceOf(address(module)), 0, "module holds nothing");
     }
 
