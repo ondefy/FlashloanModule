@@ -11,26 +11,31 @@ ERC-7579 executor module for Safe smart wallets that enables atomic flashloan-ba
 | UnifiedFlashloanModule (implementation) | `0x0f27999D99e9ffe2387e31F8344A7FAbf5FAe739` |
 | TargetRegistry | `0x1c824Fc9D57fFD350a3c8bc3cD66B2a855ebC7f8` |
 
+The deployed proxy still runs v4. v5 (this branch) runs callback executions through the Zyfai prod
+GuardedExecModule `0xF659d30D4EB88B06A909F20839D8959Bd77d8790`, set with `setGuardedExec` after the
+upgrade. Do not point it at the prototype GuardedExec `0x2AbE…`: its registry `0x1c82…` whitelists
+raw Aave `withdraw(asset,amount,to)` and Morpho `borrow(...,receiver)`.
+
 ## Repository Structure
 
 ```
 src/
   interfaces/
-    ITargetRegistry.sol        # Whitelist interface
     ISafeWallet.sol            # Safe wallet interface (used by registry)
   module/
-    UnifiedFlashloanModule.sol # Production module (v4)
+    UnifiedFlashloanModule.sol # Production module (v5)
   registry/
-    TargetRegistry.sol         # Target+selector whitelist
+    TargetRegistry.sol         # Copy of zyfai-executor-module's audited TargetRegistry (not read by the module)
 
 script/
-  Deploy.s.sol                 # Deploy TargetRegistry + Module (impl + proxy)
+  Deploy.s.sol                 # Deploy Module (impl + proxy)
   SetupWhitelist.s.sol         # Whitelist all selectors in TargetRegistry
 
 test/
-  mocks/                       # MockAavePool, MockMorphoBlue, MockERC20, MockSmartAccount, MockTargetRegistry
-  UnifiedFlashloanModuleTest.t.sol   # Unit tests (48 tests, no network)
-  UnifiedFlashloanModuleFork.t.sol   # Fork tests (Base mainnet)
+  mocks/                       # MockAavePool, MockMorphoBlue, MockERC20, MockSmartAccount, MockGuardedExec
+  UnifiedFlashloanModuleTest.t.sol          # Unit tests (no network)
+  UnifiedFlashloanModuleFork.t.sol          # Fork tests (Base mainnet, mock account)
+  UnifiedFlashloanModuleSafe7579Fork.t.sol  # Fork tests (Base mainnet, real Safe7579 + prod GuardedExec)
 
 unified-scripts/               # TypeScript scripts for on-chain operations
   src/
@@ -60,6 +65,10 @@ backend/                       # Express + TypeScript API server
 ## Build & Test
 
 ```bash
+# Install (dependencies are git submodules: forge-std v1.17.0, openzeppelin-contracts v5.1.0)
+git clone https://github.com/ondefy/FlashloanModule && cd FlashloanModule
+git submodule update --init   # or clone with --recurse-submodules
+
 # Build contracts (Solidity 0.8.24, Cancun EVM, via-ir)
 forge build
 
@@ -67,13 +76,17 @@ forge build
 forge test --match-contract UnifiedFlashloanModuleTest -v
 
 # Run fork tests (Base mainnet — uses public RPC or BASE_RPC_URL env)
-forge test --match-contract UnifiedFlashloanModuleForkTest -vv
+forge test --match-contract "UnifiedFlashloanModuleForkTest|UnifiedFlashloanModuleSafe7579ForkTest" -vv
 
-# Run all tests
+# Run all tests (includes fork tests)
 forge test -v
 
 # Run a single test by name
 forge test --match-test test_MorphoFlashloan_Success -vv
+
+# Coverage (via-ir needs --ir-minimum). src/registry is excluded: it is an unmodified copy of
+# zyfai-executor-module's audited TargetRegistry, which the module does not call.
+forge coverage --ir-minimum --no-match-coverage "src/registry|script/|test/"
 ```
 
 ## Deploy Contracts
@@ -123,6 +136,8 @@ forge script script/SetupWhitelist.s.sol:SetupWhitelistScript \
 ```
 
 This whitelists 9 target+selector pairs: USDC.approve, WETH.approve, Aave supply/borrow/repay/withdraw, Morpho supplyCollateral/borrow, Module.initiateFlashloan.
+
+Never run this script against the Zyfai prod registry (`GuardedExecModule(0xF659…).registry()`): raw Aave `withdraw(asset,amount,to)` and Morpho `borrow(...,receiver)` let a session key choose the recipient. With v5 the prod registry only needs `(module proxy, initiateFlashloan)`; callback executions must use selectors that registry already allows (Adapter `*ForSelf`, approve to whitelisted spenders).
 
 ## TypeScript Scripts
 
@@ -225,41 +240,44 @@ LOG_LEVEL=info
 | GET | `/positions` | JWT | All active positions |
 | GET | `/positions/history` | JWT | Transaction log history |
 
-## UnifiedFlashloanModule v4
+## UnifiedFlashloanModule v5
 
 ### What it does
 
-Enables Safe smart wallets to execute atomic flashloan operations. The module borrows tokens from Morpho Blue (0% fee) or Aave V3 (0.05% fee), executes a batch of arbitrary operations on the Safe, then pulls tokens back to repay the flashloan — all in a single transaction.
+Enables Safe smart wallets to execute atomic flashloan operations. The module borrows tokens from Morpho Blue (0% fee) or Aave V3 (0.05% fee), runs a batch of operations on the Safe through GuardedExecModule, then pulls tokens back to repay the flashloan — all in a single transaction.
 
 ### How it works
 
 ```
-Safe calls initiateFlashloan(provider, token, amount, executions)
+Session key UserOp -> Safe -> GuardedExec.executeGuardedBatch([Module.initiateFlashloan(provider, token, amount, executions)])
+  -> GuardedExec checks (Module, initiateFlashloan) against its registry, Safe calls the Module
   -> Module requests flashloan from Morpho/Aave
   -> Provider sends tokens to Module
   -> Callback fires:
-     1. Validate every execution against TargetRegistry whitelist
-     2. Transfer tokens to Safe
-     3. Execute batch on Safe via executeFromExecutor
-     4. Pull tokens back from Safe to Module
-     5. Approve repayment to provider
+     1. Transfer tokens to Safe
+     2. Safe (via executeFromExecutor) calls GuardedExec.executeGuardedBatch(executions)
+        -> GuardedExec applies all of its checks, then runs executions on the Safe
+     3. Pull tokens back from Safe to Module (token.transfer(module, repayAmount))
+     4. Approve repayment to provider
 ```
+
+The Safe must have both GuardedExecModule and UnifiedFlashloanModule installed as executors.
 
 ### Security model
 
-No per-operation signatures. Security relies on three layers:
+No per-operation signatures. One whitelist: GuardedExecModule's registry.
 
 1. **Session key + SmartSessions** — Validator authorizes the UserOp (scoped key)
-2. **GuardedExecModule** — Validates `initiateFlashloan` selector against TargetRegistry
-3. **TargetRegistry** — Validates every inner execution's target+selector inside the callback
+2. **GuardedExecModule (outer batch)** — `(module, initiateFlashloan)` must be whitelisted
+3. **GuardedExecModule (callback batch)** — every inner execution goes through `executeGuardedBatch` with `msg.sender = Safe`: target+selector whitelist, ERC20 transfer recipient, approve spender, and any further checks of the deployed GuardedExec version (v2.1.0 adds `setAuthorization`/`setOperator` grantee and the Aave v4 Spoke health-factor floor; Base runs v2.0.0 today)
 
-Registry is mandatory. Module reverts with `RegistryNotSet` if registry is `address(0)`.
+The module itself never runs caller-supplied executions on the Safe. Its only direct call on the Safe is the repayment `token.transfer(module, repayAmount)`, with recipient and amount fixed by the module. The callback reverts with `GuardedExecNotSet` until `guardedExec` is set. Up to v4 the module checked only target+selector against its own registry and ran executions directly, which skipped the recipient and spender checks (for example `AavePool.withdraw(WETH, max, attacker)` inside a flashloan).
 
 ### Key design decisions
 
-- **No signatures** — Removed ERC-1271 signature verification. The TargetRegistry whitelist + session key authorization chain provides equivalent security without the complexity of flashloan hash signing.
-- **Registry required** — Unlike v3 where registry was optional, v4 always requires a registry. This prevents the module from being used without a whitelist.
-- **Protocol-agnostic** — Inner executions can call any contract/function as long as it's whitelisted. Works with Aave, Morpho, Moonwell, Compound, or any protocol.
+- **No signatures** — Removed ERC-1271 signature verification. The GuardedExec whitelist + session key authorization chain provides equivalent security without the complexity of flashloan hash signing.
+- **Single whitelist** — The module no longer reads a registry. The `registry` storage field is kept (deprecated) so the ERC-7201 layout is unchanged; `guardedExec` is appended after it.
+- **Protocol-agnostic** — Inner executions can call any contract/function GuardedExec allows for the Safe.
 - **Dual provider** — Morpho Blue (0% fee, preferred) and Aave V3 (0.05% fee, fallback).
 
 ### Flashloan execution flow (6-step collateral swap: Aave -> Morpho)
@@ -272,6 +290,8 @@ Registry is mandatory. Module reverts with `RegistryNotSet` if registry is `addr
 6. Borrow USDC from Morpho Blue to repay flashloan
 
 When using Aave flashloans, step 6 borrows `flashAmount + premium` to cover the Aave fee.
+
+Under v5 with the prod GuardedExec this flow does not run as written: the raw Aave `repay`/`withdraw` and Morpho `supplyCollateral`/`borrow` selectors are not in the prod registry, and `withdraw`/`borrow` must not be added because they take a recipient. Steps 2, 3, 5 and 6 need receiver-pinned Adapter methods first.
 
 ## Key Addresses (Base Mainnet)
 
