@@ -46,24 +46,25 @@ yarn lint               # Type-check (tsc --noEmit)
 
 ### Core Contracts (src/)
 
-**UnifiedFlashloanModule** (`src/module/UnifiedFlashloanModule.sol`) — ERC-7579 executor module (type 2) installed on Safe smart wallets. Borrows tokens from Morpho Blue (0% fee) or Aave V3 (0.05% fee), executes a batch of operations on the Safe via `executeFromExecutor`, then repays. UUPS upgradeable with ERC-7201 namespaced storage. Entry point: `initiateFlashloan(provider, token, amount, executions)`.
+**UnifiedFlashloanModule** (`src/module/UnifiedFlashloanModule.sol`) — ERC-7579 executor module (type 2) installed on Safe smart wallets. Borrows tokens from Morpho Blue (0% fee) or Aave V3 (0.05% fee), has the Safe run the batch through `GuardedExecModule.executeGuardedBatch`, then repays. UUPS upgradeable with ERC-7201 namespaced storage. Entry point: `initiateFlashloan(provider, token, amount, executions)`.
 
-**TargetRegistry** (`src/registry/TargetRegistry.sol`) — Whitelist of `target + selector` pairs. Every execution inside a flashloan callback is validated against this registry. Also manages allowed ERC20 token recipients. Owner-managed via `addToWhitelist`/`removeFromWhitelist`. Pausable for emergency stops. Two-step ownership transfer.
+**TargetRegistry** (`src/registry/TargetRegistry.sol`) — Unmodified copy of zyfai-executor-module's audited registry, used by `SetupWhitelist.s.sol`. The module does not read it (since v5).
 
 ### Security Model (3 layers)
 
 1. **Session key** — SmartSessions validator authorizes the UserOp
-2. **GuardedExecModule** (from zyfai-executor-module) — Validates `initiateFlashloan` selector against TargetRegistry before execution
-3. **TargetRegistry** — Validates every inner execution's target+selector inside the flashloan callback
+2. **GuardedExecModule** (prod `0xF659…`, from zyfai-executor-module) — Validates `initiateFlashloan` against its registry before execution
+3. **GuardedExecModule again, inside the callback** — The Safe calls `executeGuardedBatch(executions)`, so every inner execution gets the full GuardedExec checks (whitelist, ERC20 recipient, approve spender, ...)
 
-No per-operation signatures. Registry whitelist + session key chain provides security.
+No per-operation signatures. The module never runs caller-supplied executions on the Safe directly; its only direct call is the repayment `token.transfer(module, repayAmount)`.
 
 ### Transaction Flow
 
 ```
-Safe -> GuardedExecModule -> TargetRegistry (whitelist check) -> UnifiedFlashloanModule.initiateFlashloan
+Safe -> GuardedExecModule (whitelist check) -> UnifiedFlashloanModule.initiateFlashloan
   -> Morpho/Aave sends tokens to Module
-  -> Callback: validate executions, transfer tokens to Safe, execute batch, pull tokens back, repay
+  -> Callback: transfer tokens to Safe, Safe -> GuardedExecModule.executeGuardedBatch(executions),
+     pull tokens back, repay
 ```
 
 ### Backend (backend/)

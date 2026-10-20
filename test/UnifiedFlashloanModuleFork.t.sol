@@ -9,7 +9,7 @@ import {
 } from "../src/module/UnifiedFlashloanModule.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MockSmartAccount} from "./mocks/MockSmartAccount.sol";
-import {MockTargetRegistry} from "./mocks/MockTargetRegistry.sol";
+import {MockGuardedExec} from "./mocks/MockGuardedExec.sol";
 
 // ---- Inline interfaces for real Base mainnet contracts ----
 
@@ -83,8 +83,10 @@ interface IMorphoBlue {
 
 /**
  * @title UnifiedFlashloanModuleForkTest
- * @notice Fork-based mainnet tests for UnifiedFlashloanModule v4 on Base (no signatures)
- * @dev Tests both Morpho and Aave flashloan paths against real Base contracts.
+ * @notice Fork-based mainnet tests for UnifiedFlashloanModule v5 on Base (no signatures)
+ * @dev Tests both Morpho and Aave flashloan paths against real Base contracts, with a mock
+ *      account and a forwarding MockGuardedExec. Real Safe7579 + prod GuardedExec coverage is in
+ *      UnifiedFlashloanModuleSafe7579Fork.t.sol.
  *
  * Run with:
  *   forge test --match-contract UnifiedFlashloanModuleForkTest -vv
@@ -99,6 +101,9 @@ contract UnifiedFlashloanModuleForkTest is Test {
     address constant AAVE_POOL = 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5;
     address constant WETH_BASE = 0x4200000000000000000000000000000000000006;
     address constant USDC_BASE = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant DEPLOYED_PROXY = 0x2C75600A65e79aC1DE53d9B815CdaFEBE3089927;
+    address constant PROD_GUARDED_EXEC = 0xF659d30D4EB88B06A909F20839D8959Bd77d8790;
+    bytes32 constant MODULE_STORAGE_LOCATION = 0x1326f637c5886074b57d190b4306fa412074c3e410bb749e6117119d5f42dd00;
 
     // Morpho Blue USDC/WETH market params
     address constant MORPHO_ORACLE = 0xFEa2D58cEfCb9fcb597723c6bAE66fFE4193aFE4;
@@ -116,7 +121,7 @@ contract UnifiedFlashloanModuleForkTest is Test {
 
     UnifiedFlashloanModule public module;
     MockSmartAccount public smartAccount;
-    MockTargetRegistry public registry;
+    MockGuardedExec public guardedExec;
 
     address public moduleOwner;
 
@@ -130,25 +135,13 @@ contract UnifiedFlashloanModuleForkTest is Test {
 
         moduleOwner = makeAddr("ModuleOwner");
 
-        // Deploy registry and whitelist all DeFi selectors used in collateral swap
-        registry = new MockTargetRegistry();
-        // ERC20 approve on USDC and WETH
-        registry.addToWhitelist(USDC_BASE, IERC20Balance.approve.selector);
-        registry.addToWhitelist(WETH_BASE, IERC20Balance.approve.selector);
-        // Aave operations
-        registry.addToWhitelist(AAVE_POOL, IAavePool.repay.selector);
-        registry.addToWhitelist(AAVE_POOL, IAavePool.withdraw.selector);
-        registry.addToWhitelist(AAVE_POOL, IAavePool.supply.selector);
-        registry.addToWhitelist(AAVE_POOL, IAavePool.borrow.selector);
-        // Morpho operations
-        registry.addToWhitelist(MORPHO_BLUE, IMorphoBlue.supplyCollateral.selector);
-        registry.addToWhitelist(MORPHO_BLUE, IMorphoBlue.borrow.selector);
+        guardedExec = new MockGuardedExec();
 
-        // Deploy unified module behind ERC1967Proxy with real Base provider addresses + registry
+        // Deploy unified module behind ERC1967Proxy with real Base provider addresses
         UnifiedFlashloanModule implementation = new UnifiedFlashloanModule();
         ERC1967Proxy proxy = new ERC1967Proxy(
             address(implementation),
-            abi.encodeCall(UnifiedFlashloanModule.initialize, (moduleOwner, MORPHO_BLUE, AAVE_POOL, address(registry)))
+            abi.encodeCall(UnifiedFlashloanModule.initialize, (moduleOwner, MORPHO_BLUE, AAVE_POOL, address(guardedExec)))
         );
         module = UnifiedFlashloanModule(address(proxy));
         vm.label(address(module), "UnifiedModule(Proxy)");
@@ -157,8 +150,9 @@ contract UnifiedFlashloanModuleForkTest is Test {
         smartAccount = new MockSmartAccount(makeAddr("AccountOwner"));
         vm.label(address(smartAccount), "SmartAccount");
 
-        // Install module as executor (type 2)
+        // Install module and GuardedExec as executors (type 2)
         smartAccount.installExecutor(address(module));
+        smartAccount.installExecutor(address(guardedExec));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -167,13 +161,48 @@ contract UnifiedFlashloanModuleForkTest is Test {
 
     function test_ForkModuleDeployed() public view {
         assertEq(module.name(), "UnifiedFlashloanModule");
-        assertEq(module.version(), "4.0.0");
+        assertEq(module.version(), "5.0.0");
         assertTrue(module.isModuleType(2), "Should support executor");
         assertFalse(module.isModuleType(3), "Should not support fallback");
         assertEq(module.owner(), moduleOwner);
         assertFalse(module.paused());
         assertEq(module.morphoBlue(), MORPHO_BLUE);
         assertEq(module.aavePool(), AAVE_POOL);
+    }
+
+    /// @notice Local-fork simulation of the v4 -> v5 upgrade of the deployed proxy: ERC-7201 slots
+    ///         keep their values, the appended guardedExec slot starts empty, and flashloans
+    ///         revert until the owner sets it. Nothing is broadcast.
+    function test_ForkUpgradeDeployedProxyPreservesStorage() public {
+        UnifiedFlashloanModule deployed = UnifiedFlashloanModule(DEPLOYED_PROXY);
+        address owner = deployed.owner();
+        bytes32[4] memory before;
+        for (uint256 i = 0; i < 4; i++) {
+            before[i] = vm.load(DEPLOYED_PROXY, bytes32(uint256(MODULE_STORAGE_LOCATION) + i));
+        }
+        assertEq(deployed.version(), "4.0.0");
+        assertEq(before[3], bytes32(0), "appended slot unused in v4");
+
+        UnifiedFlashloanModule newImpl = new UnifiedFlashloanModule();
+        vm.prank(owner);
+        deployed.upgradeToAndCall(address(newImpl), "");
+
+        assertEq(deployed.version(), "5.0.0");
+        assertEq(deployed.owner(), owner);
+        for (uint256 i = 0; i < 4; i++) {
+            assertEq(vm.load(DEPLOYED_PROXY, bytes32(uint256(MODULE_STORAGE_LOCATION) + i)), before[i]);
+        }
+        assertEq(deployed.morphoBlue(), MORPHO_BLUE);
+        assertEq(deployed.aavePool(), AAVE_POOL);
+        assertEq(deployed.guardedExec(), address(0));
+
+        vm.prank(address(smartAccount));
+        vm.expectRevert(UnifiedFlashloanModule.GuardedExecNotSet.selector);
+        deployed.initiateFlashloan(FlashloanProvider.MORPHO, USDC_BASE, 1e6, _createNoOpExecution());
+
+        vm.prank(owner);
+        deployed.setGuardedExec(PROD_GUARDED_EXEC);
+        assertEq(deployed.guardedExec(), PROD_GUARDED_EXEC);
     }
 
     /*//////////////////////////////////////////////////////////////

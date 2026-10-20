@@ -9,8 +9,6 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-import {ITargetRegistry} from "../interfaces/ITargetRegistry.sol";
-
 interface IMorphoBlue {
     function flashLoan(address token, uint256 assets, bytes calldata data) external;
 }
@@ -51,6 +49,10 @@ struct Execution {
     bytes callData;
 }
 
+interface IGuardedExecModule {
+    function executeGuardedBatch(Execution[] calldata executions) external;
+}
+
 enum FlashloanProvider {
     MORPHO,
     AAVE
@@ -62,9 +64,13 @@ enum FlashloanProvider {
  * @notice ERC-7579 executor module that enables smart accounts to initiate flashloans
  *         from multiple providers (Morpho Blue, Aave V3) via a single entry point.
  *         Uses UUPS upgradeable pattern with ERC-7201 namespaced storage.
- * @dev Security relies on TargetRegistry whitelist validation of every execution's
- *      target+selector. The module is called via GuardedExecModule (session key authorized),
- *      providing defense-in-depth through the SmartSessions + TargetRegistry chain.
+ * @dev The module never runs caller-supplied executions on the account directly. Inside the
+ *      flashloan callback it has the account call `GuardedExecModule.executeGuardedBatch`, so
+ *      every inner execution passes the same checks as any session-key batch (target+selector
+ *      whitelist, ERC20 transfer recipient, approve spender, and whatever else that GuardedExec
+ *      version enforces). The account must have both this module and `guardedExec` installed as
+ *      executors. The only call the module makes on the account itself is the repayment
+ *      `token.transfer(address(this), repayAmount)`.
  */
 contract UnifiedFlashloanModule is
     Initializable,
@@ -92,7 +98,9 @@ contract UnifiedFlashloanModule is
     struct ModuleStorage {
         address morphoBlue;
         address aavePool;
+        /// @dev Deprecated since 5.0.0 (was the module's own TargetRegistry). Kept for layout.
         address registry;
+        address guardedExec;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zyfai.storage.UnifiedFlashloanModule")) - 1)) & ~bytes32(uint256(0xff))
@@ -128,7 +136,7 @@ contract UnifiedFlashloanModule is
 
     event ProviderUpdated(FlashloanProvider indexed provider, address indexed newAddress);
 
-    event RegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    event GuardedExecUpdated(address indexed oldGuardedExec, address indexed newGuardedExec);
 
     /*//////////////////////////////////////////////////////////////
                                ERRORS
@@ -138,9 +146,8 @@ contract UnifiedFlashloanModule is
     error InvalidExecutionsLength();
     error UnsupportedProvider();
     error InvalidProvider();
-    error TargetSelectorNotWhitelisted(address target, bytes4 selector);
-    error InvalidCalldata();
-    error RegistryNotSet();
+    error InvalidGuardedExec();
+    error GuardedExecNotSet();
     error ZeroFlashloanAmount();
     error RepaymentShortfall();
 
@@ -158,34 +165,33 @@ contract UnifiedFlashloanModule is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Initialize the module with owner, provider addresses, and registry
+     * @notice Initialize the module with owner, provider addresses, and GuardedExecModule
      * @param initialOwner  Module owner (can pause, upgrade, set providers)
      * @param morphoBlue_   Morpho Blue contract address
      * @param aavePool_     Aave V3 Pool contract address
-     * @param registry_     TargetRegistry address for whitelist validation
+     * @param guardedExec_  GuardedExecModule that validates and runs the callback executions
      */
     function initialize(
         address initialOwner,
         address morphoBlue_,
         address aavePool_,
-        address registry_
+        address guardedExec_
     ) external initializer {
         if (initialOwner == address(0)) revert OwnableInvalidOwner(address(0));
         if (morphoBlue_ == address(0)) revert InvalidProvider();
         if (aavePool_ == address(0)) revert InvalidProvider();
+        if (guardedExec_ == address(0)) revert InvalidGuardedExec();
 
         _transferOwnership(initialOwner);
 
         ModuleStorage storage s = _getModuleStorage();
         s.morphoBlue = morphoBlue_;
         s.aavePool = aavePool_;
-        s.registry = registry_;
+        s.guardedExec = guardedExec_;
 
         emit ProviderUpdated(FlashloanProvider.MORPHO, morphoBlue_);
         emit ProviderUpdated(FlashloanProvider.AAVE, aavePool_);
-        if (registry_ != address(0)) {
-            emit RegistryUpdated(address(0), registry_);
-        }
+        emit GuardedExecUpdated(address(0), guardedExec_);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -197,7 +203,7 @@ contract UnifiedFlashloanModule is
     }
 
     function version() external pure returns (string memory) {
-        return "4.0.0";
+        return "5.0.0";
     }
 
     function isModuleType(uint256 typeId) external pure returns (bool) {
@@ -240,23 +246,21 @@ contract UnifiedFlashloanModule is
         emit ProviderUpdated(FlashloanProvider.AAVE, aavePool_);
     }
 
-    /**
-     * @notice Get the registry contract address
-     * @return The TargetRegistry address
-     */
-    function registry() external view returns (address) {
-        return _getModuleStorage().registry;
+    function guardedExec() external view returns (address) {
+        return _getModuleStorage().guardedExec;
     }
 
     /**
-     * @notice Update the TargetRegistry address for whitelist validation
-     * @param registry_ New TargetRegistry contract address
+     * @notice Update the GuardedExecModule that validates and runs the callback executions
+     * @dev Must be a GuardedExecModule installed as an executor on every account using this module.
+     * @param guardedExec_ New GuardedExecModule address
      */
-    function setRegistry(address registry_) external onlyOwner {
+    function setGuardedExec(address guardedExec_) external onlyOwner {
+        if (guardedExec_ == address(0)) revert InvalidGuardedExec();
         ModuleStorage storage s = _getModuleStorage();
-        address oldRegistry = s.registry;
-        s.registry = registry_;
-        emit RegistryUpdated(oldRegistry, registry_);
+        address oldGuardedExec = s.guardedExec;
+        s.guardedExec = guardedExec_;
+        emit GuardedExecUpdated(oldGuardedExec, guardedExec_);
     }
 
     function pause() external onlyOwner {
@@ -269,8 +273,8 @@ contract UnifiedFlashloanModule is
 
     /**
      * @notice Initiate a flashloan from any supported provider
-     * @dev Security: TargetRegistry validates every execution's target+selector in the callback.
-     *      The caller (smart account) must be authorized via the session key + GuardedExecModule chain.
+     * @dev The caller is the account. `executions` run inside the callback through
+     *      `GuardedExecModule.executeGuardedBatch` on that account, never directly.
      * @param provider   Flashloan provider (MORPHO or AAVE)
      * @param token      Token to borrow
      * @param amount     Amount to borrow
@@ -341,7 +345,8 @@ contract UnifiedFlashloanModule is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Shared callback logic: validate executions, execute operations, pull back tokens
+     * @notice Shared callback logic: send tokens to the account, run the executions through
+     *         GuardedExec on the account, pull back tokens
      * @param assets      Flashloaned amount
      * @param repayAmount Amount to pull back (assets for Morpho, assets + premium for Aave)
      * @param data        Encoded (account, token, executions)
@@ -352,18 +357,24 @@ contract UnifiedFlashloanModule is
         uint256 repayAmount,
         bytes calldata data
     ) private returns (address token) {
+        address guardedExec_ = _getModuleStorage().guardedExec;
+        if (guardedExec_ == address(0)) revert GuardedExecNotSet();
+
         address account;
         Execution[] memory executions;
         (account, token, executions) = abi.decode(data, (address, address, Execution[]));
-
-        // Validate executions against whitelist
-        _validateExecutions(executions);
 
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
 
         IERC20(token).safeTransfer(account, assets);
 
-        _executeOnAccount(account, executions);
+        Execution[] memory guarded = new Execution[](1);
+        guarded[0] = Execution({
+            target: guardedExec_,
+            value: 0,
+            callData: abi.encodeCall(IGuardedExecModule.executeGuardedBatch, (executions))
+        });
+        _executeOnAccount(account, guarded);
 
         Execution[] memory pullBack = new Execution[](1);
         pullBack[0] = Execution({
@@ -381,33 +392,6 @@ contract UnifiedFlashloanModule is
         emit FlashloanCallbackExecuted(
             account, provider, token, assets, executions.length
         );
-    }
-
-    /**
-     * @notice Validate each execution against the TargetRegistry whitelist
-     * @dev Reverts if no registry is set. Every execution's target+selector must be whitelisted.
-     * @param executions The operations to validate
-     */
-    function _validateExecutions(Execution[] memory executions) private view {
-        address reg = _getModuleStorage().registry;
-        if (reg == address(0)) revert RegistryNotSet();
-
-        uint256 length = executions.length;
-        for (uint256 i = 0; i < length;) {
-            bytes memory callData = executions[i].callData;
-            if (callData.length < 4) revert InvalidCalldata();
-
-            bytes4 selector;
-            assembly {
-                selector := mload(add(callData, 32))
-            }
-
-            if (!ITargetRegistry(reg).whitelist(executions[i].target, selector)) {
-                revert TargetSelectorNotWhitelisted(executions[i].target, selector);
-            }
-
-            unchecked { ++i; }
-        }
     }
 
     function _executeOnAccount(address account, Execution[] memory executions) private {

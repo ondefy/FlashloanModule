@@ -15,12 +15,12 @@ import {MockMorphoBlue} from "./mocks/MockMorphoBlue.sol";
 import {MockAavePool} from "./mocks/MockAavePool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockSmartAccount} from "./mocks/MockSmartAccount.sol";
-import {MockTargetRegistry} from "./mocks/MockTargetRegistry.sol";
+import {MockGuardedExec} from "./mocks/MockGuardedExec.sol";
 
 /**
  * @title UnifiedFlashloanModuleTest
  * @author ZyFAI
- * @notice Unit tests for UnifiedFlashloanModule v4 — multi-provider flashloan + registry whitelist (no signatures)
+ * @notice Unit tests for UnifiedFlashloanModule v5 — multi-provider flashloan, callback executions routed through GuardedExec
  */
 contract UnifiedFlashloanModuleTest is Test {
     /*//////////////////////////////////////////////////////////////
@@ -45,7 +45,7 @@ contract UnifiedFlashloanModuleTest is Test {
 
     event ProviderUpdated(FlashloanProvider indexed provider, address indexed newAddress);
 
-    event RegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
+    event GuardedExecUpdated(address indexed oldGuardedExec, address indexed newGuardedExec);
 
     /*//////////////////////////////////////////////////////////////
                               CONSTANTS
@@ -53,6 +53,9 @@ contract UnifiedFlashloanModuleTest is Test {
 
     uint256 constant FLASHLOAN_AMOUNT = 10_000 * 1e6; // 10k USDC
     uint256 constant AAVE_PREMIUM_BPS = 5; // 0.05%
+    bytes32 constant MODULE_STORAGE_LOCATION = 0x1326f637c5886074b57d190b4306fa412074c3e410bb749e6117119d5f42dd00;
+    uint256 constant GUARDED_EXEC_OFFSET = 3; // morphoBlue, aavePool, registry (deprecated), guardedExec
+    bytes32 constant BATCH_EXEC_MODE = 0x0100000000000000000000000000000000000000000000000000000000000000;
 
     /*//////////////////////////////////////////////////////////////
                                STORAGE
@@ -63,7 +66,7 @@ contract UnifiedFlashloanModuleTest is Test {
     MockAavePool public aavePool;
     MockSmartAccount public smartAccount;
     MockERC20 public usdc;
-    MockTargetRegistry public registry;
+    MockGuardedExec public guardedExec;
 
     address public moduleOwner;
 
@@ -79,12 +82,10 @@ contract UnifiedFlashloanModuleTest is Test {
         morphoBlue = new MockMorphoBlue();
         aavePool = new MockAavePool();
 
-        // Deploy registry and whitelist the approve selector on USDC
-        registry = new MockTargetRegistry();
-        registry.addToWhitelist(address(usdc), MockERC20.approve.selector);
+        guardedExec = new MockGuardedExec();
 
         // Deploy unified module behind ERC1967 proxy
-        module = _deployModule(moduleOwner, address(morphoBlue), address(aavePool), address(registry));
+        module = _deployModule(moduleOwner, address(morphoBlue), address(aavePool), address(guardedExec));
 
         // Fund mock protocols with liquidity
         usdc.mint(address(morphoBlue), 1_000_000 * 1e6);
@@ -93,6 +94,7 @@ contract UnifiedFlashloanModuleTest is Test {
         // Deploy mock smart account and install module as executor
         smartAccount = new MockSmartAccount(makeAddr("AccountOwner"));
         smartAccount.installExecutor(address(module));
+        smartAccount.installExecutor(address(guardedExec));
 
         // Fund smart account for repayments
         usdc.mint(address(smartAccount), 100_000 * 1e6);
@@ -106,11 +108,11 @@ contract UnifiedFlashloanModuleTest is Test {
         assertEq(module.owner(), moduleOwner);
         assertEq(module.morphoBlue(), address(morphoBlue));
         assertEq(module.aavePool(), address(aavePool));
-        assertEq(module.registry(), address(registry));
+        assertEq(module.guardedExec(), address(guardedExec));
         assertFalse(module.paused());
     }
 
-    function test_Initialize_EmitsProviderAndRegistryEvents() public {
+    function test_Initialize_EmitsProviderAndGuardedExecEvents() public {
         UnifiedFlashloanModule impl = new UnifiedFlashloanModule();
 
         vm.expectEmit(true, true, false, false);
@@ -118,13 +120,13 @@ contract UnifiedFlashloanModuleTest is Test {
         vm.expectEmit(true, true, false, false);
         emit ProviderUpdated(FlashloanProvider.AAVE, address(aavePool));
         vm.expectEmit(true, true, false, false);
-        emit RegistryUpdated(address(0), address(registry));
+        emit GuardedExecUpdated(address(0), address(guardedExec));
 
         new ERC1967Proxy(
             address(impl),
             abi.encodeCall(
                 UnifiedFlashloanModule.initialize,
-                (moduleOwner, address(morphoBlue), address(aavePool), address(registry))
+                (moduleOwner, address(morphoBlue), address(aavePool), address(guardedExec))
             )
         );
     }
@@ -136,7 +138,7 @@ contract UnifiedFlashloanModuleTest is Test {
             address(impl),
             abi.encodeCall(
                 UnifiedFlashloanModule.initialize,
-                (address(0), address(morphoBlue), address(aavePool), address(registry))
+                (address(0), address(morphoBlue), address(aavePool), address(guardedExec))
             )
         );
     }
@@ -148,7 +150,7 @@ contract UnifiedFlashloanModuleTest is Test {
             address(impl),
             abi.encodeCall(
                 UnifiedFlashloanModule.initialize,
-                (moduleOwner, address(0), address(aavePool), address(registry))
+                (moduleOwner, address(0), address(aavePool), address(guardedExec))
             )
         );
     }
@@ -160,14 +162,14 @@ contract UnifiedFlashloanModuleTest is Test {
             address(impl),
             abi.encodeCall(
                 UnifiedFlashloanModule.initialize,
-                (moduleOwner, address(morphoBlue), address(0), address(registry))
+                (moduleOwner, address(morphoBlue), address(0), address(guardedExec))
             )
         );
     }
 
     function test_RevertWhen_DoubleInitialize() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        module.initialize(moduleOwner, address(morphoBlue), address(aavePool), address(registry));
+        module.initialize(moduleOwner, address(morphoBlue), address(aavePool), address(guardedExec));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -179,7 +181,7 @@ contract UnifiedFlashloanModuleTest is Test {
     }
 
     function test_Version() public view {
-        assertEq(module.version(), "4.0.0");
+        assertEq(module.version(), "5.0.0");
     }
 
     function test_IsModuleType_Executor() public view {
@@ -257,36 +259,55 @@ contract UnifiedFlashloanModuleTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                   4. ADMIN: REGISTRY MANAGEMENT
+                   4. ADMIN: GUARDED EXEC MANAGEMENT
     //////////////////////////////////////////////////////////////*/
 
-    function test_RegistryAddress() public view {
-        assertEq(module.registry(), address(registry));
+    function test_GuardedExecAddress() public view {
+        assertEq(module.guardedExec(), address(guardedExec));
     }
 
-    function test_SetRegistry() public {
-        address newRegistry = makeAddr("NewRegistry");
+    function test_SetGuardedExec() public {
+        address newGuardedExec = makeAddr("NewGuardedExec");
         vm.prank(moduleOwner);
         vm.expectEmit(true, true, false, false);
-        emit RegistryUpdated(address(registry), newRegistry);
-        module.setRegistry(newRegistry);
-        assertEq(module.registry(), newRegistry);
+        emit GuardedExecUpdated(address(guardedExec), newGuardedExec);
+        module.setGuardedExec(newGuardedExec);
+        assertEq(module.guardedExec(), newGuardedExec);
     }
 
-    function test_RevertWhen_SetRegistryNotOwner() public {
-        vm.prank(makeAddr("notOwner"));
-        vm.expectRevert();
-        module.setRegistry(makeAddr("NewRegistry"));
+    function test_RevertWhen_SetGuardedExecNotOwner() public {
+        address notOwner = makeAddr("notOwner");
+        vm.prank(notOwner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, notOwner));
+        module.setGuardedExec(makeAddr("NewGuardedExec"));
     }
 
-    function test_RevertWhen_FlashloanWithoutRegistry() public {
-        // Disable registry
+    function test_RevertWhen_SetGuardedExecZeroAddress() public {
         vm.prank(moduleOwner);
-        module.setRegistry(address(0));
+        vm.expectRevert(UnifiedFlashloanModule.InvalidGuardedExec.selector);
+        module.setGuardedExec(address(0));
+    }
+
+    function test_RevertWhen_InitializeZeroGuardedExec() public {
+        UnifiedFlashloanModule impl = new UnifiedFlashloanModule();
+        vm.expectRevert(UnifiedFlashloanModule.InvalidGuardedExec.selector);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                UnifiedFlashloanModule.initialize,
+                (moduleOwner, address(morphoBlue), address(aavePool), address(0))
+            )
+        );
+    }
+
+    /// @dev A v4 proxy upgraded to v5 has guardedExec unset until the owner calls setGuardedExec
+    function test_RevertWhen_FlashloanWithoutGuardedExec() public {
+        vm.store(address(module), bytes32(uint256(MODULE_STORAGE_LOCATION) + GUARDED_EXEC_OFFSET), bytes32(0));
+        assertEq(module.guardedExec(), address(0));
 
         Execution[] memory executions = _createApproveExecution();
         vm.prank(address(smartAccount));
-        vm.expectRevert(UnifiedFlashloanModule.RegistryNotSet.selector);
+        vm.expectRevert(UnifiedFlashloanModule.GuardedExecNotSet.selector);
         module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), FLASHLOAN_AMOUNT, executions);
     }
 
@@ -373,9 +394,9 @@ contract UnifiedFlashloanModuleTest is Test {
         // State preserved after upgrade
         assertEq(module.morphoBlue(), address(morphoBlue));
         assertEq(module.aavePool(), address(aavePool));
-        assertEq(module.registry(), address(registry));
+        assertEq(module.guardedExec(), address(guardedExec));
         assertEq(module.owner(), moduleOwner);
-        assertEq(module.version(), "4.0.0");
+        assertEq(module.version(), "5.0.0");
     }
 
     function test_RevertWhen_UpgradeNotOwner() public {
@@ -476,88 +497,74 @@ contract UnifiedFlashloanModuleTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-            12. SECURITY: REGISTRY WHITELIST ENFORCEMENT
+            12. SECURITY: EXECUTIONS ROUTED THROUGH GUARDED EXEC
     //////////////////////////////////////////////////////////////*/
 
-    function test_WhitelistedExecution_Succeeds() public {
+    function test_ExecutionsRunOnAccountViaGuardedExec() public {
         _executeFlashloan(FlashloanProvider.MORPHO, FLASHLOAN_AMOUNT);
+
+        assertEq(guardedExec.batchCount(), 1);
+        assertEq(guardedExec.lastAccount(), address(smartAccount));
+        assertEq(usdc.allowance(address(smartAccount), address(module)), FLASHLOAN_AMOUNT, "inner approve ran on account");
     }
 
-    function test_RevertWhen_TargetNotWhitelisted() public {
-        address unknownTarget = makeAddr("UnknownDeFiProtocol");
-        bytes4 selector = bytes4(0xdeadbeef);
+    /// @notice Regression: the callback ran `executions` directly on the account through
+    ///         executeFromExecutor, so GuardedExec's recipient/spender checks never applied.
+    ///         With GuardedExec set to run nothing, nothing from `executions` may reach the account.
+    function testFuzz_CallbackNeverRunsRawExecutionsOnAccount(uint256 amount, bool useAave) public {
+        amount = bound(amount, 1, FLASHLOAN_AMOUNT);
+        FlashloanProvider provider = useAave ? FlashloanProvider.AAVE : FlashloanProvider.MORPHO;
+        uint256 premium = useAave ? _aavePremium(amount) : 0;
+        address attacker = makeAddr("attacker");
 
-        Execution[] memory executions = new Execution[](1);
-        executions[0] = Execution({target: unknownTarget, value: 0, callData: abi.encodeWithSelector(selector, uint256(100))});
-
-        vm.prank(address(smartAccount));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                UnifiedFlashloanModule.TargetSelectorNotWhitelisted.selector, unknownTarget, selector
-            )
-        );
-        module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), FLASHLOAN_AMOUNT, executions);
-    }
-
-    function test_RevertWhen_SelectorNotWhitelisted() public {
         Execution[] memory executions = new Execution[](1);
         executions[0] = Execution({
             target: address(usdc),
             value: 0,
-            callData: abi.encodeWithSelector(MockERC20.transfer.selector, address(module), FLASHLOAN_AMOUNT)
+            callData: abi.encodeCall(MockERC20.approve, (attacker, type(uint256).max))
+        });
+        Execution[] memory wrapped = new Execution[](1);
+        wrapped[0] = Execution({
+            target: address(guardedExec),
+            value: 0,
+            callData: abi.encodeCall(MockGuardedExec.executeGuardedBatch, (executions))
         });
 
-        vm.prank(address(smartAccount));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                UnifiedFlashloanModule.TargetSelectorNotWhitelisted.selector,
-                address(usdc),
-                MockERC20.transfer.selector
-            )
+        guardedExec.setForward(false);
+        uint256 balanceBefore = usdc.balanceOf(address(smartAccount));
+
+        vm.expectCall(
+            address(smartAccount),
+            abi.encodeCall(MockSmartAccount.executeFromExecutor, (BATCH_EXEC_MODE, abi.encode(wrapped))),
+            1
         );
-        module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), FLASHLOAN_AMOUNT, executions);
+        vm.expectCall(
+            address(smartAccount),
+            abi.encodeCall(MockSmartAccount.executeFromExecutor, (BATCH_EXEC_MODE, abi.encode(executions))),
+            0
+        );
+        vm.prank(address(smartAccount));
+        module.initiateFlashloan(provider, address(usdc), amount, executions);
+
+        assertEq(usdc.allowance(address(smartAccount), attacker), 0, "raw execution reached the account");
+        assertEq(guardedExec.batchCount(), 1);
+        assertEq(guardedExec.lastAccount(), address(smartAccount));
+        assertEq(guardedExec.lastBatchHash(), keccak256(abi.encode(executions)));
+        assertEq(usdc.balanceOf(address(smartAccount)), balanceBefore - premium, "flashloan repaid");
     }
 
-    function test_RevertWhen_PartiallyWhitelistedBatch() public {
-        Execution[] memory executions = new Execution[](2);
-        executions[0] = Execution({
-            target: address(usdc),
-            value: 0,
-            callData: abi.encodeWithSelector(MockERC20.approve.selector, address(module), FLASHLOAN_AMOUNT)
-        });
-        executions[1] = Execution({
-            target: address(usdc),
-            value: 0,
-            callData: abi.encodeWithSelector(MockERC20.transfer.selector, address(module), FLASHLOAN_AMOUNT)
-        });
-
-        vm.prank(address(smartAccount));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                UnifiedFlashloanModule.TargetSelectorNotWhitelisted.selector,
-                address(usdc),
-                MockERC20.transfer.selector
-            )
+    function test_RevertWhen_GuardedExecRejectsBatch() public {
+        bytes memory reason = abi.encodeWithSignature(
+            "UnauthorizedERC20Approve(address,address)", address(usdc), makeAddr("attacker")
         );
+        vm.mockCallRevert(
+            address(guardedExec), abi.encodeWithSelector(MockGuardedExec.executeGuardedBatch.selector), reason
+        );
+
+        Execution[] memory executions = _createApproveExecution();
+        vm.prank(address(smartAccount));
+        vm.expectRevert(reason);
         module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), FLASHLOAN_AMOUNT, executions);
-    }
-
-    function test_WhitelistEnforcedForAaveProvider() public {
-        address unknownTarget = makeAddr("UnknownDeFiProtocol");
-        bytes4 selector = bytes4(0xdeadbeef);
-
-        Execution[] memory executions = new Execution[](1);
-        executions[0] = Execution({target: unknownTarget, value: 0, callData: abi.encodeWithSelector(selector, uint256(100))});
-
-        usdc.mint(address(smartAccount), _aavePremium(FLASHLOAN_AMOUNT));
-
-        vm.prank(address(smartAccount));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                UnifiedFlashloanModule.TargetSelectorNotWhitelisted.selector, unknownTarget, selector
-            )
-        );
-        module.initiateFlashloan(FlashloanProvider.AAVE, address(usdc), FLASHLOAN_AMOUNT, executions);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -580,15 +587,6 @@ contract UnifiedFlashloanModuleTest is Test {
         module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), 0, executions);
     }
 
-    function test_RevertWhen_InvalidCalldata() public {
-        Execution[] memory executions = new Execution[](1);
-        executions[0] = Execution({target: address(usdc), value: 0, callData: hex"dead"});
-
-        vm.prank(address(smartAccount));
-        vm.expectRevert(UnifiedFlashloanModule.InvalidCalldata.selector);
-        module.initiateFlashloan(FlashloanProvider.MORPHO, address(usdc), FLASHLOAN_AMOUNT, executions);
-    }
-
     /*//////////////////////////////////////////////////////////////
                           HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -597,12 +595,12 @@ contract UnifiedFlashloanModuleTest is Test {
         address owner_,
         address morphoBlue_,
         address aavePool_,
-        address registry_
+        address guardedExec_
     ) internal returns (UnifiedFlashloanModule) {
         UnifiedFlashloanModule impl = new UnifiedFlashloanModule();
         ERC1967Proxy proxy = new ERC1967Proxy(
             address(impl),
-            abi.encodeCall(UnifiedFlashloanModule.initialize, (owner_, morphoBlue_, aavePool_, registry_))
+            abi.encodeCall(UnifiedFlashloanModule.initialize, (owner_, morphoBlue_, aavePool_, guardedExec_))
         );
         return UnifiedFlashloanModule(address(proxy));
     }
